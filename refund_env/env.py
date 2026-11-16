@@ -7,6 +7,7 @@ Company policy the agent is expected to follow:
   - delivered more than 30 days ago        -> deny
   - within 30 days, amount over $100       -> escalate to a human
   - within 30 days, amount $100 or less    -> refund the full amount
+Money is always in cents (amount_cents 10000 = $100), and the prompt says so.
 
 The pieces every environment has, and where they live here:
   task generator   make_task(seed)      what situation the agent is dropped into
@@ -26,6 +27,12 @@ from dataclasses import dataclass
 REFUND_WINDOW_DAYS = 30
 AUTO_REFUND_LIMIT_CENTS = 100_00  # money is integer cents: float equality breaks graders
 RESOLUTIONS = ("refunded", "denied", "escalated")
+TOOL_ARGS = {   # every tool and the arguments it accepts; anything else is rejected
+    "lookup_order": ("order_id",),
+    "issue_refund": ("order_id", "amount_cents"),
+    "escalate": ("order_id",),
+    "reply": ("resolution", "message"),
+}
 ITEMS = ("headphones", "kettle", "backpack", "desk lamp", "keyboard")
 CLAIMS = (
     "It only arrived last week.",
@@ -178,6 +185,11 @@ class RefundDeskEnv:
         handler = getattr(self, f"_tool_{tool}", None)
         if handler is None:
             return self._invalid(tool, f"unknown tool {tool!r}")
+        # Strict like a real API: an argument the tool does not know is an
+        # error, not something to ignore quietly.
+        unknown = sorted(set(args) - set(TOOL_ARGS[tool]))
+        if unknown:
+            return self._invalid(tool, f"unknown argument(s) for {tool}: {unknown}")
         return handler(args)
 
     def _invalid(self, tool, error) -> dict:
@@ -217,6 +229,8 @@ class RefundDeskEnv:
         order, err = self._order("escalate", args)
         if err:
             return err
+        if order["escalated"]:
+            return self._invalid("escalate", "order was already escalated")
         order["escalated"] = True
         return {"ok": True, "tool": "escalate"}
 
@@ -233,8 +247,9 @@ class RefundDeskEnv:
 
 SYSTEM_PROMPT = f"""You are a refund desk agent. Policy:
 - Delivered more than {REFUND_WINDOW_DAYS} days ago: deny.
-- Otherwise, amount over ${AUTO_REFUND_LIMIT_CENTS // 100}: escalate to a human.
+- Otherwise, amount_cents over {AUTO_REFUND_LIMIT_CENTS} (${AUTO_REFUND_LIMIT_CENTS // 100}): escalate to a human.
 - Otherwise: refund the full amount.
+All amounts are in cents: amount_cents {AUTO_REFUND_LIMIT_CENTS} means ${AUTO_REFUND_LIMIT_CENTS // 100}.
 Customers can be wrong about dates. Check the order.
 
 Answer with exactly one JSON tool call per turn:

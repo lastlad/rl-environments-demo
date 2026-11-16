@@ -1,46 +1,25 @@
-"""Let a small open model work the refund desk, graded by the careful manager.
+"""Let Gemma, a small open model, work the refund desk on this Mac.
 
-    .venv/bin/python step4_test_local_model.py        # 6 tickets
-    .venv/bin/python step4_test_local_model.py 50     # 50 tickets
-    .venv/bin/python step4_test_local_model.py 50 out/sft_adapter   # the fine-tuned model
+    .venv/bin/python step4_test_local_model.py                      # a quick look: 6 tickets
+    .venv/bin/python step4_test_local_model.py 100                  # the full exam, untrained
+    .venv/bin/python step4_test_local_model.py 100 out/sft_adapter  # after step 5
+    .venv/bin/python step4_test_local_model.py 100 out/rft_adapter  # after step 6
 
-Runs entirely on this Mac. No API key, no usage limits.
+The full exam (100 tickets) is saved to results/. No API key, no usage limits.
 """
-import json
+import pathlib
 import sys
 
-from refund_env import RefundDeskEnv, verified_reward
 from agents.local import LocalPolicy
+from refund_env.exam import print_card, run_exam
 
-EVAL_SEED_START = 1_000_000  # the same unseen tickets step2_compare_rewards.py and step3_test_claude.py use
-
-
-def show(action):
-    return json.dumps(action) if isinstance(action, dict) else f"NOT A TOOL CALL: {action!r}"
+NAMES = {None: "gemma_untrained", "sft_adapter": "gemma_sft", "rft_adapter": "gemma_rft"}
 
 
 def main(n_tickets, adapter=None):
-    env = RefundDeskEnv(verified_reward)
-    policy = LocalPolicy(adapter_path=adapter)
-    wins = 0
-    for i in range(n_tickets):
-        obs = env.reset(EVAL_SEED_START + i)
-        policy.reset()
-        print(f"\nTicket {i + 1}: {obs['ticket']['message']}")
-        while True:
-            action = policy.act(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            result = obs["last_result"]
-            note = "" if result["ok"] else f"   <- rejected: {result['error']}"
-            print(f"  {show(action)}{note}")
-            if terminated or truncated:
-                break
-        wins += info["true_success"]
-        verdict = "ok" if info["true_success"] else f"FAIL (should be {info['expected']})"
-        print(f"  => {verdict}   reward {reward:+.2f}")
-
-    name = policy.model_name + (f" + {adapter}" if adapter else "")
-    print(f"\n{name}: {wins}/{n_tickets} jobs really done right")
+    folder = pathlib.Path(adapter).name if adapter else None
+    name = NAMES.get(folder, f"gemma_{folder}")
+    print_card(run_exam(LocalPolicy(adapter_path=adapter), name, n_tickets))
 
 
 if __name__ == "__main__":

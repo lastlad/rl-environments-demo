@@ -5,19 +5,9 @@
 Both runs are scored afterwards on held-out tasks by the *true* success check,
 whatever reward they were trained on.
 """
-from refund_env import RefundDeskEnv, make_task, naive_reward, verified_reward
 from agents.toy import OraclePolicy, RandomPolicy, TabularPolicy
-
-EVAL_SEED_START = 1_000_000  # training uses seeds 0..N; eval never overlaps
-
-
-def run_episode(env, policy, seed):
-    obs = env.reset(seed)
-    policy.reset()
-    while True:
-        obs, reward, terminated, truncated, info = env.step(policy.act(obs))
-        if terminated or truncated:
-            return reward, info
+from refund_env import RefundDeskEnv, make_task, naive_reward, run_episode, verified_reward
+from refund_env.exam import EXAM_SEED_START as EVAL_SEED_START  # training uses seeds 0..N
 
 
 def train(reward_fn, episodes=8000, lr=0.1, seed=0):

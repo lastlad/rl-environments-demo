@@ -9,10 +9,11 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from refund_env import (RefundDeskEnv, make_task, naive_reward, parse_action,  # noqa: E402
-                        verified_reward)
-from refund_env.env import expected_resolution  # noqa: E402
 from agents.toy import OraclePolicy, RandomPolicy  # noqa: E402
+from refund_env import (RefundDeskEnv, make_task, naive_reward, parse_action,  # noqa: E402
+                        rollout, run_episode, verified_reward)
+from refund_env.env import SYSTEM_PROMPT, expected_resolution  # noqa: E402
+from refund_env.exam import EXAM_TICKETS, run_exam  # noqa: E402
 
 
 def call(tool, **args):
@@ -23,13 +24,7 @@ def seed_for(expected):
     return next(s for s in range(1000) if make_task(s).expected == expected)
 
 
-def play(env, policy, seed):
-    obs = env.reset(seed)
-    policy.reset()
-    while True:
-        obs, reward, term, trunc, info = env.step(policy.act(obs))
-        if term or trunc:
-            return reward, info
+play = run_episode
 
 
 class Reproducibility(unittest.TestCase):
@@ -101,6 +96,26 @@ class BadActions(unittest.TestCase):
         self.assertFalse(obs["last_result"]["ok"])
         self.assertEqual(env.db[oid]["refunded_cents"], amount)
 
+    def test_double_escalation_is_rejected(self):
+        env = RefundDeskEnv(verified_reward)
+        env.reset(seed_for("escalated"))
+        oid = env.task.order_id
+        env.step(call("escalate", order_id=oid))
+        obs, *_ = env.step(call("escalate", order_id=oid))
+        self.assertFalse(obs["last_result"]["ok"])
+        self.assertTrue(env.db[oid]["escalated"])
+
+    def test_unknown_arguments_are_rejected(self):
+        """A tool that quietly ignores a misspelt argument hides agent mistakes."""
+        env = RefundDeskEnv(verified_reward)
+        env.reset(seed_for("escalated"))
+        oid = env.task.order_id
+        obs, *_ = env.step(call("escalate", order_id=oid, reason="over the limit"))
+        self.assertFalse(obs["last_result"]["ok"])
+        self.assertFalse(env.db[oid]["escalated"])
+        obs, *_ = env.step(call("lookup_order", order_id=oid, verbose=True))
+        self.assertFalse(obs["last_result"]["ok"])
+
     def test_cannot_refund_more_than_was_paid(self):
         env = RefundDeskEnv(verified_reward)
         env.reset(5)
@@ -108,6 +123,28 @@ class BadActions(unittest.TestCase):
         obs, *_ = env.step(call("issue_refund", order_id=oid,
                                 amount_cents=env.db[oid]["amount_cents"] + 1))
         self.assertFalse(obs["last_result"]["ok"])
+
+
+class PromptMatchesTheWorld(unittest.TestCase):
+    def test_prompt_states_the_limit_in_the_unit_the_tools_use(self):
+        """Orders show amount_cents, so the rule must be stated in cents too."""
+        self.assertIn("amount_cents over 10000", SYSTEM_PROMPT)
+
+    def test_rollout_records_what_was_seen_and_done(self):
+        env = RefundDeskEnv(verified_reward)
+        traj = rollout(env, OraclePolicy(), seed_for("refunded"))
+        roles = [m["role"] for m in traj["messages"]]
+        self.assertEqual(roles, ["system"] + ["user", "assistant"] * 3)
+        self.assertTrue(traj["true_success"])
+
+
+class TheExam(unittest.TestCase):
+    def test_expert_passes_and_score_card_adds_up(self):
+        card = run_exam(OraclePolicy(), "test", n_tickets=30, show=False)
+        self.assertEqual(card["right"], 30)
+        self.assertEqual(sum(v["tickets"] for v in card["by_type"].values()), 30)
+        self.assertEqual(card["said_it_without_doing_it"], 0)
+        self.assertLess(30, EXAM_TICKETS)  # a short run is never saved as a result
 
 
 class EpisodeBoundaries(unittest.TestCase):

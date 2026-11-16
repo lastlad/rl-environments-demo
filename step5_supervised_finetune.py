@@ -2,19 +2,18 @@
 
     .venv/bin/python step5_supervised_finetune.py
 
-Step 1 writes the expert's episodes as training examples.
-Step 2 fine-tunes the model on them and saves the result to out/sft_adapter.
-Then test it:  .venv/bin/python step4_test_local_model.py 50 out/sft_adapter
+First it writes the expert's episodes as training examples.
+Then it fine-tunes the model on them and saves the result to out/sft_adapter.
+Then test it:  .venv/bin/python step4_test_local_model.py 100 out/sft_adapter
 """
 import json
 import pathlib
 import subprocess
 import sys
 
-from refund_env import RefundDeskEnv, verified_reward
 from agents.local import MODEL
 from agents.toy import OraclePolicy
-from step1_watch_one_ticket import rollout
+from refund_env import RefundDeskEnv, rollout, verified_reward
 
 HERE = pathlib.Path(__file__).parent
 DATA = HERE / "out" / "sft_data"
@@ -59,6 +58,7 @@ if __name__ == "__main__":
         "--steps-per-report", "100",
         "--steps-per-eval", "200",
         "--val-batches", "20",
+        "--save-every", "600",      # keep only the final weights, to save disk
         "--max-seq-length", "1024",
     ], check=True)
     print("\nsaved fine-tuned weights to out/sft_adapter")

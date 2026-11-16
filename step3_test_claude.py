@@ -1,52 +1,27 @@
 """Let Claude work the refund desk and grade it with the careful manager.
 
-    .venv/bin/python step3_test_claude.py        # 6 tickets
-    .venv/bin/python step3_test_claude.py 20     # 20 tickets
+    .venv/bin/python step3_test_claude.py        # a quick look: 6 tickets
+    .venv/bin/python step3_test_claude.py 100    # the full exam (saved to results/)
 
 With no API key set, this uses your Claude Code login (your subscription).
 If ANTHROPIC_API_KEY is set, it uses the API and bills API credit instead.
 Each ticket is 2-3 model calls either way.
 """
-import json
 import os
 import sys
 
 import anthropic
 
-from refund_env import RefundDeskEnv, verified_reward
 from agents.claude import ClaudeLoginPolicy, ClaudePolicy
-
-EVAL_SEED_START = 1_000_000  # the same unseen tickets step2_compare_rewards.py uses for its exam
-
-
-def show(action):
-    return json.dumps(action) if isinstance(action, dict) else f"NOT A TOOL CALL: {action!r}"
+from refund_env.exam import print_card, run_exam
 
 
 def main(n_tickets):
-    env = RefundDeskEnv(verified_reward)
     use_api = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
     policy = ClaudePolicy() if use_api else ClaudeLoginPolicy()
     print("Using", "the Anthropic API (API credit)" if use_api else "your Claude Code login (subscription)")
-    wins = 0
-    for i in range(n_tickets):
-        obs = env.reset(EVAL_SEED_START + i)
-        policy.reset()
-        print(f"\nTicket {i + 1}: {obs['ticket']['message']}")
-        while True:
-            action = policy.act(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            result = obs["last_result"]
-            note = "" if result["ok"] else f"   <- rejected: {result['error']}"
-            print(f"  {show(action)}{note}")
-            if terminated or truncated:
-                break
-        wins += info["true_success"]
-        verdict = "ok" if info["true_success"] else f"FAIL (should be {info['expected']})"
-        print(f"  => {verdict}   reward {reward:+.2f}")
-
-    print(f"\n{policy.model}: {wins}/{n_tickets} jobs really done right")
-    print(f"tokens used: {policy.input_tokens:,} in, {policy.output_tokens:,} out")
+    print_card(run_exam(policy, "claude", n_tickets))
+    print(f"model: {policy.model}   tokens used: {policy.input_tokens:,} in, {policy.output_tokens:,} out")
 
 
 if __name__ == "__main__":
