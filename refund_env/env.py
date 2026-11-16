@@ -1,0 +1,260 @@
+"""Refund desk: a small RL environment shaped like a real agent task.
+
+One episode = one support ticket. The agent calls tools against a simulated
+order database, then ends the episode with a `reply`.
+
+Company policy the agent is expected to follow:
+  - delivered more than 30 days ago        -> deny
+  - within 30 days, amount over $100       -> escalate to a human
+  - within 30 days, amount $100 or less    -> refund the full amount
+
+The pieces every environment has, and where they live here:
+  task generator   make_task(seed)      what situation the agent is dropped into
+  state            env.db               the simulated world, mutated by tools
+  observation      env._obs()           the part of the world the agent may see
+  actions          env._execute()       tool calls: {"tool": ..., "args": {...}}
+  reward           rewards.py           scores the finished episode
+  termination      env.step()           `reply` ends it; the step limit truncates it
+"""
+from __future__ import annotations
+
+import copy
+import json
+import random
+from dataclasses import dataclass
+
+REFUND_WINDOW_DAYS = 30
+AUTO_REFUND_LIMIT_CENTS = 100_00  # money is integer cents: float equality breaks graders
+RESOLUTIONS = ("refunded", "denied", "escalated")
+ITEMS = ("headphones", "kettle", "backpack", "desk lamp", "keyboard")
+CLAIMS = (
+    "It only arrived last week.",
+    "I've had it for a while now.",
+    "It's well within your return window.",
+    "",
+)
+
+
+@dataclass(frozen=True)
+class Task:
+    task_id: str
+    customer: str
+    order_id: str
+    message: str
+    orders: dict    # initial database; the env works on a copy
+    expected: str   # ground truth, one of RESOLUTIONS. Never shown to the agent.
+
+
+@dataclass
+class Episode:
+    """Everything a reward function may look at once the episode is over."""
+    task: Task
+    db: dict              # final database state
+    steps: list           # [{"action": ..., "result": ...}, ...]
+    reply: dict | None    # {"resolution": ..., "message": ...}, None if never sent
+    truncated: bool
+    invalid_actions: int
+
+
+def expected_resolution(days_since_delivery: int, amount_cents: int) -> str:
+    """The policy, written once. The task generator is tested against it."""
+    if days_since_delivery > REFUND_WINDOW_DAYS:
+        return "denied"
+    if amount_cents > AUTO_REFUND_LIMIT_CENTS:
+        return "escalated"
+    return "refunded"
+
+
+def make_task(seed: int) -> Task:
+    """Same seed -> same task, always. Uses its own RNG, never the global one."""
+    rng = random.Random(seed)
+    expected = rng.choice(RESOLUTIONS)
+    # randint is inclusive, so the boundaries (day 30, exactly $100) do occur.
+    if expected == "denied":
+        days = rng.randint(REFUND_WINDOW_DAYS + 1, 90)
+        amount = rng.randint(5_00, 300_00)
+    elif expected == "escalated":
+        days = rng.randint(1, REFUND_WINDOW_DAYS)
+        amount = rng.randint(AUTO_REFUND_LIMIT_CENTS + 1, 300_00)
+    else:
+        days = rng.randint(1, REFUND_WINDOW_DAYS)
+        amount = rng.randint(5_00, AUTO_REFUND_LIMIT_CENTS)
+
+    customer = f"C{rng.randint(100, 999)}"
+    order_id, other_id = rng.sample(range(1000, 9999), 2)
+    order_id, other_id = f"A{order_id}", f"A{other_id}"
+
+    def order(amount_cents, days_since_delivery):
+        return {
+            "customer": customer,
+            "item": rng.choice(ITEMS),
+            "amount_cents": amount_cents,
+            "days_since_delivery": days_since_delivery,
+            "refunded_cents": 0,
+            "escalated": False,
+        }
+
+    orders = {
+        order_id: order(amount, days),
+        # A second order on the same account. It is refundable, so an agent
+        # that acts on the wrong order moves real (simulated) money.
+        other_id: order(rng.randint(5_00, 100_00), rng.randint(1, 30)),
+    }
+    # What the customer says is not correlated with the truth. The agent has to
+    # look the order up instead of trusting the ticket.
+    claim = rng.choice(CLAIMS)
+    message = f"I want a refund for order {order_id}. {claim}".strip()
+    return Task(f"refund-{seed}", customer, order_id, message, orders, expected)
+
+
+class RefundDeskEnv:
+    """reset(seed) -> obs;  step(action) -> (obs, reward, terminated, truncated, info)"""
+
+    def __init__(self, reward_fn, max_steps: int = 6):
+        self.reward_fn = reward_fn
+        self.max_steps = max_steps
+        self.task = None
+        self.done = True
+
+    def reset(self, seed: int) -> dict:
+        self.task = make_task(seed)
+        self.db = copy.deepcopy(self.task.orders)  # nothing survives from the last episode
+        self.steps = []
+        self.reply = None
+        self.invalid_actions = 0
+        self.done = False
+        return self._obs(None)
+
+    def step(self, action):
+        if self.done:
+            raise RuntimeError("episode is over (or never started): call reset() first")
+
+        result = self._execute(action)
+        logged = copy.deepcopy(action) if isinstance(action, dict) else repr(action)
+        self.steps.append({"action": logged, "result": result})
+
+        # terminated = the agent ended it. truncated = we cut it off.
+        terminated = self.reply is not None
+        truncated = not terminated and len(self.steps) >= self.max_steps
+        self.done = terminated or truncated
+
+        reward, info = 0.0, {}
+        if self.done:
+            from .rewards import is_true_success
+            ep = self.episode(truncated)
+            reward = self.reward_fn(ep)
+            # `info` is for the training loop and for logging. A policy must
+            # never read it: it contains the answer.
+            info = {"true_success": is_true_success(ep), "expected": self.task.expected}
+        return self._obs(result), reward, terminated, truncated, info
+
+    def episode(self, truncated: bool = False) -> Episode:
+        return Episode(self.task, copy.deepcopy(self.db), copy.deepcopy(self.steps),
+                       copy.deepcopy(self.reply), truncated, self.invalid_actions)
+
+    # ---- observation ------------------------------------------------------
+
+    def _obs(self, last_result) -> dict:
+        return {
+            "ticket": {
+                "customer": self.task.customer,
+                "order_id": self.task.order_id,
+                "message": self.task.message,
+            },
+            "last_result": copy.deepcopy(last_result),
+            "steps_left": self.max_steps - len(self.steps),
+        }
+
+    # ---- actions ----------------------------------------------------------
+    # A bad action never raises. It costs a step and returns an error the agent
+    # can read, exactly like a real API would.
+
+    def _execute(self, action) -> dict:
+        if not isinstance(action, dict) or not isinstance(action.get("tool"), str):
+            return self._invalid(None, 'action must look like {"tool": "<name>", "args": {...}}')
+        tool, args = action["tool"], action.get("args", {})
+        if not isinstance(args, dict):
+            return self._invalid(tool, "args must be an object")
+        handler = getattr(self, f"_tool_{tool}", None)
+        if handler is None:
+            return self._invalid(tool, f"unknown tool {tool!r}")
+        return handler(args)
+
+    def _invalid(self, tool, error) -> dict:
+        self.invalid_actions += 1
+        return {"ok": False, "tool": tool, "error": error}
+
+    def _order(self, tool, args):
+        order = self.db.get(args.get("order_id")) if isinstance(args.get("order_id"), str) else None
+        if order is None:
+            return None, self._invalid(tool, f"no such order: {args.get('order_id')!r}")
+        return order, None
+
+    def _tool_lookup_order(self, args):
+        order, err = self._order("lookup_order", args)
+        if err:
+            return err
+        return {"ok": True, "tool": "lookup_order", "order": {"order_id": args["order_id"], **order}}
+
+    def _tool_issue_refund(self, args):
+        # The tool checks what a payments API would check (amount, duplicates).
+        # It does NOT check company policy. That is the agent's job, and the
+        # reward function's job to verify.
+        order, err = self._order("issue_refund", args)
+        if err:
+            return err
+        amount = args.get("amount_cents")
+        if type(amount) is not int or amount <= 0:
+            return self._invalid("issue_refund", "amount_cents must be a positive integer")
+        if order["refunded_cents"] > 0:
+            return self._invalid("issue_refund", "order was already refunded")
+        if amount > order["amount_cents"]:
+            return self._invalid("issue_refund", "amount exceeds what was paid")
+        order["refunded_cents"] = amount
+        return {"ok": True, "tool": "issue_refund", "refunded_cents": amount}
+
+    def _tool_escalate(self, args):
+        order, err = self._order("escalate", args)
+        if err:
+            return err
+        order["escalated"] = True
+        return {"ok": True, "tool": "escalate"}
+
+    def _tool_reply(self, args):
+        if args.get("resolution") not in RESOLUTIONS:
+            return self._invalid("reply", f"resolution must be one of {list(RESOLUTIONS)}")
+        self.reply = {"resolution": args["resolution"], "message": str(args.get("message", ""))}
+        return {"ok": True, "tool": "reply"}
+
+
+# ---- adapters for a language model -----------------------------------------
+# A scripted or tabular policy consumes the observation dict directly. An LLM
+# needs it as text, and its text output needs to be turned back into an action.
+
+SYSTEM_PROMPT = f"""You are a refund desk agent. Policy:
+- Delivered more than {REFUND_WINDOW_DAYS} days ago: deny.
+- Otherwise, amount over ${AUTO_REFUND_LIMIT_CENTS // 100}: escalate to a human.
+- Otherwise: refund the full amount.
+Customers can be wrong about dates. Check the order.
+
+Answer with exactly one JSON tool call per turn:
+{{"tool": "lookup_order", "args": {{"order_id": "..."}}}}
+{{"tool": "issue_refund", "args": {{"order_id": "...", "amount_cents": 1234}}}}
+{{"tool": "escalate", "args": {{"order_id": "..."}}}}
+{{"tool": "reply", "args": {{"resolution": "refunded|denied|escalated", "message": "..."}}}}"""
+
+
+def render_prompt(obs: dict) -> str:
+    if obs["last_result"] is None:
+        t = obs["ticket"]
+        return f"Ticket from customer {t['customer']}: {t['message']}\n({obs['steps_left']} steps left)"
+    return f"Tool result: {json.dumps(obs['last_result'])}\n({obs['steps_left']} steps left)"
+
+
+def parse_action(text: str):
+    """Model output -> action. Garbage is passed through so the env can
+    penalise it as an invalid action instead of the harness crashing."""
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return text
