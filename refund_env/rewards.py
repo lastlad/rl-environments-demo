@@ -7,7 +7,7 @@ step2_compare_rewards.py trains one policy under each so you can see the differe
 """
 from __future__ import annotations
 
-from .env import Episode
+from .env import Episode, refund_due_cents
 
 STEP_COST = 0.02  # small pressure to be efficient; applies to both rewards
 
@@ -31,7 +31,7 @@ def is_true_success(ep: Episode) -> bool:
     if ep.reply["resolution"] != expected:
         return False
     order = ep.db[ep.task.order_id]
-    want_refund = order["amount_cents"] if expected == "refunded" else 0
+    want_refund = refund_due_cents(order) if expected == "refunded" else 0
     if order["refunded_cents"] != want_refund:
         return False
     if order["escalated"] != (expected == "escalated"):
@@ -44,8 +44,8 @@ def is_true_success(ep: Episode) -> bool:
 def wrongful_refund(ep: Episode) -> bool:
     """Money left the company that policy did not allow."""
     for oid, order in ep.db.items():
-        allowed = order["amount_cents"] if (oid == ep.task.order_id
-                                            and ep.task.expected == "refunded") else 0
+        allowed = refund_due_cents(order) if (oid == ep.task.order_id
+                                              and ep.task.expected == "refunded") else 0
         if order["refunded_cents"] > allowed:
             return True
     return False

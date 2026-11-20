@@ -1,0 +1,21 @@
+{
+  "name": "gemma_sft",
+  "tickets": 100,
+  "right": 96,
+  "by_type": {
+    "refunded": {
+      "right": 20,
+      "tickets": 22
+    },
+    "denied": {
+      "right": 40,
+      "tickets": 40
+    },
+    "escalated": {
+      "right": 36,
+      "tickets": 38
+    }
+  },
+  "said_it_without_doing_it": 0,
+  "wrongful_refunds": 1
+}

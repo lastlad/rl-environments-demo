@@ -7,6 +7,7 @@ whatever reward they were trained on.
 """
 from agents.toy import OraclePolicy, RandomPolicy, TabularPolicy
 from refund_env import RefundDeskEnv, make_task, naive_reward, run_episode, verified_reward
+from refund_env.env import CASES
 from refund_env.exam import EXAM_SEED_START as EVAL_SEED_START  # training uses seeds 0..N
 
 
@@ -37,12 +38,12 @@ def show_behaviour(policy):
     """One held-out example of each case, so you can read what was learned."""
     env = RefundDeskEnv(verified_reward)
     seen, seed = set(), EVAL_SEED_START
-    while len(seen) < 3:
+    while len(seen) < len(CASES):
         seed += 1
-        expected = make_task(seed).expected
-        if expected in seen:
+        case = make_task(seed).case
+        if case in seen:
             continue
-        seen.add(expected)
+        seen.add(case)
         _, info = run_episode(env, policy, seed)
         calls = []
         for s in env.steps:
@@ -50,7 +51,7 @@ def show_behaviour(policy):
             name = a["tool"] + (f"({a['args']['resolution']})" if a["tool"] == "reply" else "")
             calls.append(name if s["result"]["ok"] else name + "[rejected]")
         mark = "ok  " if info["true_success"] else "FAIL"
-        print(f"  {mark} should be {expected:9s}: {' -> '.join(calls)}")
+        print(f"  {mark} should be {case:20s}: {' -> '.join(calls)}")
 
 
 if __name__ == "__main__":

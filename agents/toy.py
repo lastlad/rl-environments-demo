@@ -8,14 +8,18 @@ import random
 
 from refund_env.env import AUTO_REFUND_LIMIT_CENTS, REFUND_WINDOW_DAYS
 
-MACROS = ("lookup", "refund", "escalate", "reply_refunded", "reply_denied", "reply_escalated")
+MACROS = ("list", "lookup", "check", "refund_full", "refund_half", "escalate",
+          "reply_refunded", "reply_denied", "reply_escalated")
 
 
 class Memory:
     """What the agent has learned so far this episode, built from observations."""
 
     def reset(self):
-        self.order = None
+        self.order_id = None   # found by list_orders: the order whose item the customer named
+        self.item = None
+        self.order = None      # found by lookup_order
+        self.flagged = None    # found by check_customer
         self.refunded = False
         self.escalated = False
 
@@ -23,8 +27,15 @@ class Memory:
         r = obs["last_result"]
         if not r or not r["ok"]:
             return
-        if r["tool"] == "lookup_order":
+        if r["tool"] == "list_orders":
+            message = obs["ticket"]["message"]
+            named = [o for o in r["orders"] if o["item"] in message]
+            if named:
+                self.order_id, self.item = named[0]["order_id"], named[0]["item"]
+        elif r["tool"] == "lookup_order":
             self.order = r["order"]
+        elif r["tool"] == "check_customer":
+            self.flagged = r["flagged"]
         elif r["tool"] == "issue_refund":
             self.refunded = True
         elif r["tool"] == "escalate":
@@ -36,18 +47,25 @@ class Memory:
         looked = None
         if self.order is not None:
             looked = (self.order["days_since_delivery"] <= REFUND_WINDOW_DAYS,
-                      self.order["amount_cents"] > AUTO_REFUND_LIMIT_CENTS)
-        return (looked, self.refunded, self.escalated)
+                      self.order["amount_cents"] > AUTO_REFUND_LIMIT_CENTS,
+                      self.order["opened"])
+        return (self.order_id is not None, looked, self.flagged, self.refunded, self.escalated)
 
 
 def macro_to_action(macro: str, obs: dict, mem: Memory) -> dict:
-    oid = obs["ticket"]["order_id"]
+    customer, oid = obs["ticket"]["customer"], mem.order_id
+    if macro == "list":
+        return {"tool": "list_orders", "args": {"customer": customer}}
     if macro == "lookup":
+        # Looking up before listing means the order number is unknown -> the
+        # env rejects it. The policy has to learn to search first.
         return {"tool": "lookup_order", "args": {"order_id": oid}}
-    if macro == "refund":
-        # Refunding before looking up means the amount is unknown -> the env
-        # rejects it as an invalid action. The policy has to learn the order.
+    if macro == "check":
+        return {"tool": "check_customer", "args": {"customer": customer}}
+    if macro.startswith("refund"):
         amount = mem.order["amount_cents"] if mem.order else None
+        if amount is not None and macro == "refund_half":
+            amount //= 2
         return {"tool": "issue_refund", "args": {"order_id": oid, "amount_cents": amount}}
     if macro == "escalate":
         return {"tool": "escalate", "args": {"order_id": oid}}
@@ -56,26 +74,87 @@ def macro_to_action(macro: str, obs: dict, mem: Memory) -> dict:
 
 class OraclePolicy:
     """Hand-written correct behaviour. If this can't score ~100%, the
-    environment or the reward is broken, not the learner."""
+    environment or the reward is broken, not the learner.
+
+    After each act(), self.thought holds the expert's reasoning for that step,
+    in plain words. Step 5 uses it to teach a model to think, not just to copy.
+    """
 
     def __init__(self):
         self.mem = Memory()
+        self.thought = ""
 
     def reset(self):
         self.mem.reset()
+        self.thought = ""
 
     def act(self, obs):
         self.mem.update(obs)
-        looked, refunded, escalated = self.mem.state()
-        if looked is None:
+        found, looked, flagged, refunded, escalated = self.mem.state()
+        if not found:
+            macro = "list"
+        elif looked is None:
             macro = "lookup"
-        elif not looked[0]:
-            macro = "reply_denied"
-        elif looked[1]:
-            macro = "reply_escalated" if escalated else "escalate"
+        elif flagged is None:
+            macro = "check"
         else:
-            macro = "reply_refunded" if refunded else "refund"
+            in_window, over_limit, opened = looked
+            if flagged or (in_window and over_limit):
+                macro = "reply_escalated" if escalated else "escalate"
+            elif not in_window:
+                macro = "reply_denied"
+            elif refunded:
+                macro = "reply_refunded"
+            else:
+                macro = "refund_half" if opened else "refund_full"
+        self.thought = self.explain(macro, obs)
         return macro_to_action(macro, obs, self.mem)
+
+    def rules(self):
+        """Walk through the policy for this order, one rule at a time."""
+        o, flagged = self.mem.order, self.mem.flagged
+        days, amount = o["days_since_delivery"], o["amount_cents"]
+        if flagged:
+            return "Rule 1: the customer is flagged for fraud, so I escalate to a human."
+        lines = ["Rule 1: the customer is not flagged."]
+        if days > REFUND_WINDOW_DAYS:
+            lines.append(f"Rule 2: delivered {days} days ago, more than {REFUND_WINDOW_DAYS}, so I deny.")
+            return " ".join(lines)
+        lines.append(f"Rule 2: delivered {days} days ago, within {REFUND_WINDOW_DAYS}.")
+        if amount > AUTO_REFUND_LIMIT_CENTS:
+            lines.append(f"Rule 3: amount_cents {amount} is over {AUTO_REFUND_LIMIT_CENTS}, "
+                         "so I escalate to a human.")
+            return " ".join(lines)
+        lines.append(f"Rule 3: amount_cents {amount} is not over {AUTO_REFUND_LIMIT_CENTS}.")
+        if o["opened"]:
+            lines.append(f"Rule 4: the item was opened, so I refund half: "
+                         f"{amount} // 2 = {amount // 2} cents.")
+        else:
+            lines.append(f"Rule 4: the item was not opened. Rule 5: I refund the full {amount} cents.")
+        return " ".join(lines)
+
+    def explain(self, macro, obs):
+        m, customer = self.mem, obs["ticket"]["customer"]
+        if macro == "list":
+            return (f"Customer {customer} names an item, not an order number. "
+                    "First I list their orders to find the right one.")
+        if macro == "lookup":
+            return (f"The customer's {m.item} is order {m.order_id}. "
+                    "I look it up to see the delivery date, the amount and whether it was opened.")
+        if macro == "check":
+            o = m.order
+            return (f"Order {m.order_id}: delivered {o['days_since_delivery']} days ago, "
+                    f"amount_cents {o['amount_cents']}, opened {str(o['opened']).lower()}. "
+                    f"Rule 1 comes first, so I check whether customer {customer} is flagged for fraud.")
+        if macro == "escalate":
+            return f"{self.rules()} I press escalate on order {m.order_id}."
+        if macro.startswith("refund"):
+            return f"{self.rules()} I issue the refund on order {m.order_id}."
+        if macro == "reply_denied":
+            return f"{self.rules()} A denial needs no other action, so I reply now."
+        if macro == "reply_escalated":
+            return f"Order {m.order_id} has been escalated. Now I tell the customer."
+        return f"The refund on order {m.order_id} went through. Now I tell the customer."
 
 
 class RandomPolicy:

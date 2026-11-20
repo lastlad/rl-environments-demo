@@ -1,21 +1,29 @@
 {
   "name": "gemma_sft",
   "tickets": 100,
-  "right": 96,
+  "right": 99,
   "by_type": {
-    "refunded": {
-      "right": 20,
-      "tickets": 22
+    "refunded_full": {
+      "right": 17,
+      "tickets": 17
+    },
+    "refunded_half": {
+      "right": 13,
+      "tickets": 13
+    },
+    "escalated_over_limit": {
+      "right": 24,
+      "tickets": 24
+    },
+    "escalated_flagged": {
+      "right": 18,
+      "tickets": 18
     },
     "denied": {
-      "right": 40,
-      "tickets": 40
-    },
-    "escalated": {
-      "right": 36,
-      "tickets": 38
+      "right": 27,
+      "tickets": 28
     }
   },
   "said_it_without_doing_it": 0,
-  "wrongful_refunds": 1
+  "wrongful_refunds": 0
 }

@@ -1,0 +1,29 @@
+{
+  "name": "gemma_sft_then_rft",
+  "tickets": 100,
+  "right": 100,
+  "by_type": {
+    "refunded_full": {
+      "right": 17,
+      "tickets": 17
+    },
+    "refunded_half": {
+      "right": 13,
+      "tickets": 13
+    },
+    "escalated_over_limit": {
+      "right": 24,
+      "tickets": 24
+    },
+    "escalated_flagged": {
+      "right": 18,
+      "tickets": 18
+    },
+    "denied": {
+      "right": 28,
+      "tickets": 28
+    }
+  },
+  "said_it_without_doing_it": 0,
+  "wrongful_refunds": 0
+}

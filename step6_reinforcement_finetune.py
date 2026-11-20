@@ -1,13 +1,19 @@
 """Reinforcement fine-tuning: step 2's idea, with a language model as the trainee.
 
-    .venv/bin/python step6_reinforcement_finetune.py          # 3 rounds (about 20 minutes each)
-    .venv/bin/python step6_reinforcement_finetune.py 1        # 1 round
-Then test it:  .venv/bin/python step4_test_local_model.py 100 out/rft_adapter
+    .venv/bin/python step6_reinforcement_finetune.py           # 3 rounds, from the untrained model
+    .venv/bin/python step6_reinforcement_finetune.py 1         # 1 round
+    .venv/bin/python step6_reinforcement_finetune.py --after-sft   # 3 rounds, starting from step 5's weights
 
-Starts from the untrained model and saves the improved weights to
-out/rft_adapter. No expert is used: the only teacher is the careful manager's
-score. The model keeps its thinking step, and the thinking is part of what it
-is trained on.
+Each round takes 30-40 minutes. Then test it:
+    .venv/bin/python step4_test_local_model.py 100 out/rft_adapter       # from untrained
+    .venv/bin/python step4_test_local_model.py 100 out/sft_rft_adapter   # after step 5
+
+No expert is used here: the only teacher is the careful manager's score. The
+model keeps its thinking step, and the thinking is part of what it is trained on.
+
+Reinforcement can only strengthen what the model already does some of the
+time. If it never takes a step (say, checking the customer), run step 5 first
+to teach that step, then use --after-sft.
 
 This is the simplest form of reinforcement fine-tuning: keep the attempts that
 scored well and train the model to imitate them ("filtered behaviour cloning").
@@ -30,20 +36,22 @@ import sys
 
 from mlx_lm.sample_utils import make_sampler
 
-from agents.local import LocalPolicy
+from agents.local import END_OF_TURN, LocalPolicy
 from refund_env import RefundDeskEnv, run_episode, verified_reward
 from refund_env.exam import run_exam
 
 HERE = pathlib.Path(__file__).parent
-ADAPTER = HERE / "out" / "rft_adapter"  # where this script saves the weights
-DATA = HERE / "out" / "rft_data"
+AFTER_SFT = "--after-sft" in sys.argv
+SFT_ADAPTER = HERE / "out" / "sft_adapter"   # step 5's weights
+# Where this script saves the weights and its training data.
+ADAPTER = HERE / "out" / ("sft_rft_adapter" if AFTER_SFT else "rft_adapter")
+DATA = HERE / "out" / ("sft_rft_data" if AFTER_SFT else "rft_data")
 
 TICKETS_PER_ROUND = 60
 ATTEMPTS = 3
 EXPLORE_TEMP = 1.0             # randomness while practising; 0 during the exam
 QUICK_EXAM_TICKETS = 30        # a progress check each round; step 4 runs the full 100
 TRAIN_SEED_START = 10_000      # practice tickets; never overlap the exam's
-END_OF_TURN = "<turn|>"        # the token Gemma writes when it has finished speaking
 
 
 def exam(policy):
@@ -82,10 +90,17 @@ def fine_tune(episodes):
 
 
 if __name__ == "__main__":
-    rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    numbers = [a for a in sys.argv[1:] if a.isdigit()]
+    rounds = int(numbers[0]) if numbers else 3
     shutil.rmtree(ADAPTER, ignore_errors=True)
-
-    policy = LocalPolicy()
+    if AFTER_SFT:
+        if not SFT_ADAPTER.exists():
+            sys.exit("No step 5 weights in out/sft_adapter. Run step 5 first.")
+        # Start from a copy of step 5's weights; training continues from them.
+        shutil.copytree(SFT_ADAPTER, ADAPTER)
+        policy = LocalPolicy(adapter_path=str(ADAPTER))
+    else:
+        policy = LocalPolicy()
     print(f"start     unseen tickets done right {exam(policy)}", flush=True)
 
     good_episodes = []  # every good attempt so far; each round trains on all of them
@@ -102,4 +117,4 @@ if __name__ == "__main__":
               f"denied {kinds['denied']})   "
               f"unseen tickets done right {exam(policy)}", flush=True)
 
-    print("\nsaved fine-tuned weights to out/rft_adapter")
+    print(f"\nsaved fine-tuned weights to {ADAPTER.relative_to(HERE)}")

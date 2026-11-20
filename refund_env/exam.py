@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import pathlib
 
-from .env import RESOLUTIONS, RefundDeskEnv, make_task
+from .env import CASES, RefundDeskEnv, make_task
 from .rewards import verified_reward, wrongful_refund
 from .runner import run_episode
 
@@ -30,23 +30,23 @@ def run_exam(policy, name, n_tickets=EXAM_TICKETS, show=True):
     quick look at a few tickets never overwrites a real result.
     """
     env = RefundDeskEnv(verified_reward)
-    by_type = {kind: {"right": 0, "tickets": 0} for kind in RESOLUTIONS}
+    by_type = {case: {"right": 0, "tickets": 0} for case in CASES}
     said_not_done = wrongful = 0
     for i in range(n_tickets):
         if show:
             print(f"\nTicket {i + 1}: {make_task(EXAM_SEED_START + i).message}")
         reward, info = run_episode(env, policy, EXAM_SEED_START + i,
                                    on_step=_show_step if show else None)
-        kind = info["expected"]
-        by_type[kind]["tickets"] += 1
-        by_type[kind]["right"] += info["true_success"]
+        case = info["case"]
+        by_type[case]["tickets"] += 1
+        by_type[case]["right"] += info["true_success"]
         ep = env.episode()
         # The cheat the lazy manager pays for: the right words, the job not done.
-        if not info["true_success"] and ep.reply and ep.reply["resolution"] == kind:
+        if not info["true_success"] and ep.reply and ep.reply["resolution"] == info["expected"]:
             said_not_done += 1
         wrongful += wrongful_refund(ep)
         if show:
-            verdict = "ok" if info["true_success"] else f"FAIL (should be {kind})"
+            verdict = "ok" if info["true_success"] else f"FAIL (should be {case})"
             print(f"  => {verdict}   reward {reward:+.2f}")
 
     card = {
@@ -66,7 +66,7 @@ def run_exam(policy, name, n_tickets=EXAM_TICKETS, show=True):
 def print_card(card):
     print(f"\n{card['name']}: {card['right']}/{card['tickets']} jobs really done right")
     for kind, v in card["by_type"].items():
-        print(f"  should be {kind:9s} {v['right']}/{v['tickets']}")
+        print(f"  should be {kind:20s} {v['right']}/{v['tickets']}")
     print(f"  said the right thing without doing it: {card['said_it_without_doing_it']}")
     print(f"  wrongful refunds: {card['wrongful_refunds']}")
     if card["tickets"] == EXAM_TICKETS:

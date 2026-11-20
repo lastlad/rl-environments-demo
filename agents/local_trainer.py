@@ -1,6 +1,8 @@
 """Fine-tune on (prompt, output) pairs, grading the model only on the output.
 
-    python -m agents.local_trainer DATA.jsonl ADAPTER_DIR ITERS
+    python -m agents.local_trainer DATA.jsonl ADAPTER_DIR ITERS [LEARNING_RATE]
+
+If ADAPTER_DIR already holds weights, training continues from them.
 
 Each line of DATA.jsonl is {"prompt": ..., "output": ...}, the exact text the
 model saw and the exact text it wrote, thinking included. The prompt is masked:
@@ -39,6 +41,7 @@ class PromptOutputDataset:
 
 if __name__ == "__main__":
     data, adapter, iters = sys.argv[1], pathlib.Path(sys.argv[2]), int(sys.argv[3])
+    learning_rate = float(sys.argv[4]) if len(sys.argv) > 4 else 2e-5
     rows = [json.loads(line) for line in open(data)]
     model, tokenizer = load(MODEL)
     resume = adapter / "adapters.safetensors"
@@ -49,16 +52,16 @@ if __name__ == "__main__":
         "adapter_path": str(adapter),
         "resume_adapter_file": str(resume) if resume.exists() else None,
         "mask_prompt": True,
-        # Small settings so the model fits in 16 GB of memory (same as step5_supervised_finetune.py).
+        # Small settings so the model fits in 16 GB of memory .
         "batch_size": 1,
         "num_layers": 8,
         "grad_checkpoint": True,
         "iters": iters,
-        "learning_rate": 2e-5,     # small steps: big ones made the model lurch
+        "learning_rate": learning_rate,
         "val_batches": 1,
         "steps_per_eval": 100000,
         "save_every": 100000,
-        "max_seq_length": 1536,
+        "max_seq_length": 3072,
     })
     train_model(args, model,
                 PromptOutputDataset(rows, tokenizer),

@@ -120,3 +120,54 @@ revealed lessons 2, 3 and 4.
 - **Sloppy tools.** `escalate` accepted unknown arguments and could be called
   twice. A tool that quietly accepts a wrong call hides the agent's mistake.
   Both are now rejected, each with a test.
+
+## 10. Reinforcement cannot teach a step the model never takes
+
+**What happened.** On the harder shop, untrained Gemma scored 78 of 100 and
+never called `check_customer` on any ticket. After three rounds of
+reinforcement fine-tuning it scored 79, and it still never checked.
+
+**Why.** Reinforcement fine-tuning keeps the attempts that succeeded. Skipping
+the check still succeeds whenever the customer is not flagged, which is most
+tickets. So all 155 kept practice attempts skipped the check, and training
+taught Gemma that skipping is fine. With the escalate button on the easy shop,
+Gemma pressed it some of the time, so there were good attempts to keep. Here
+there were none.
+
+**Lesson.** Reinforcement only strengthens behaviour the model already
+produces sometimes. A step it never takes has to come from somewhere else: an
+example, a hint in the prompt, or a reward for the step itself.
+
+## 11. A harder shop is the real test of the training
+
+**What happened.** On the easy shop both training methods looked good (96 and
+100). On the harder shop, supervised training made Gemma worse (78 to 68) and
+reinforcement did almost nothing (78 to 79). Claude scored 100 on both shops.
+
+**Why.** Supervised training copied the expert's steps but not any reasoning,
+so Gemma checked every customer and then decided badly (lesson 3 again).
+Reinforcement had nothing new to strengthen (lesson 10).
+
+**Lesson.** A perfect score tells you the environment is too easy, not that the
+training method works. Make the environment harder until the best trainee
+still makes mistakes, then see which methods close the gap.
+
+## 12. Teach the step with reasoning, then reinforce it
+
+**What happened.** The expert's examples were rewritten so each step includes
+the expert's reasoning in Gemma's thinking format ("Rule 1: the customer is not
+flagged. Rule 2: delivered 26 days ago, within 30..."). Supervised training on
+those took Gemma from 78 to 99 of 100. It checked every customer, refunded half
+on all 13 opened items, and had no wrongful refunds. Reinforcement starting
+from those weights reached 100 of 100.
+
+**Why.** Supervised training supplied the step reinforcement could not find
+(lesson 10). The reasoning in the examples kept Gemma thinking, so it did not
+fall back on blanket habits (lesson 3). After that, Gemma solved 59 of its 60
+first practice tickets, so reinforcement had plenty of good attempts to keep,
+and they were good for the right reason (lesson 4).
+
+**Lesson.** Use supervised training to teach what the model never does, with
+the reasoning written out, and reinforcement to polish what it already does.
+The order matters. The move from 99 to 100 is a single ticket, so it is
+within noise: here supervised training did nearly all the work.

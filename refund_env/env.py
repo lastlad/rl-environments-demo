@@ -3,10 +3,13 @@
 One episode = one support ticket. The agent calls tools against a simulated
 order database, then ends the episode with a `reply`.
 
-Company policy the agent is expected to follow:
-  - delivered more than 30 days ago        -> deny
-  - within 30 days, amount over $100       -> escalate to a human
-  - within 30 days, amount $100 or less    -> refund the full amount
+The customer names the item, not the order number, so the agent has to find
+the order first. Company policy, checked in this order:
+  1. customer is flagged for fraud        -> escalate to a human
+  2. delivered more than 30 days ago      -> deny
+  3. amount over $100                     -> escalate to a human
+  4. the item was opened                  -> refund half the amount
+  5. otherwise                            -> refund the full amount
 Money is always in cents (amount_cents 10000 = $100), and the prompt says so.
 
 The pieces every environment has, and where they live here:
@@ -27,8 +30,12 @@ from dataclasses import dataclass
 REFUND_WINDOW_DAYS = 30
 AUTO_REFUND_LIMIT_CENTS = 100_00  # money is integer cents: float equality breaks graders
 RESOLUTIONS = ("refunded", "denied", "escalated")
+# The five kinds of ticket. The part before "_" is the right reply.
+CASES = ("refunded_full", "refunded_half", "escalated_over_limit", "escalated_flagged", "denied")
 TOOL_ARGS = {   # every tool and the arguments it accepts; anything else is rejected
+    "list_orders": ("customer",),
     "lookup_order": ("order_id",),
+    "check_customer": ("customer",),
     "issue_refund": ("order_id", "amount_cents"),
     "escalate": ("order_id",),
     "reply": ("resolution", "message"),
@@ -38,6 +45,7 @@ CLAIMS = (
     "It only arrived last week.",
     "I've had it for a while now.",
     "It's well within your return window.",
+    "I never even opened it.",
     "",
 )
 
@@ -49,7 +57,9 @@ class Task:
     order_id: str
     message: str
     orders: dict    # initial database; the env works on a copy
-    expected: str   # ground truth, one of RESOLUTIONS. Never shown to the agent.
+    flagged: bool   # is the customer flagged for fraud?
+    case: str       # ground truth, one of CASES. Never shown to the agent.
+    expected: str   # the right reply, one of RESOLUTIONS. Never shown either.
 
 
 @dataclass
@@ -63,61 +73,75 @@ class Episode:
     invalid_actions: int
 
 
-def expected_resolution(days_since_delivery: int, amount_cents: int) -> str:
+def expected_case(flagged: bool, days_since_delivery: int, amount_cents: int,
+                  opened: bool) -> str:
     """The policy, written once. The task generator is tested against it."""
+    if flagged:
+        return "escalated_flagged"
     if days_since_delivery > REFUND_WINDOW_DAYS:
         return "denied"
     if amount_cents > AUTO_REFUND_LIMIT_CENTS:
-        return "escalated"
-    return "refunded"
+        return "escalated_over_limit"
+    return "refunded_half" if opened else "refunded_full"
+
+
+def refund_due_cents(order: dict) -> int:
+    """How much a refundable order should get back: half (rounded down) if opened."""
+    return order["amount_cents"] // 2 if order["opened"] else order["amount_cents"]
 
 
 def make_task(seed: int) -> Task:
     """Same seed -> same task, always. Uses its own RNG, never the global one."""
     rng = random.Random(seed)
-    expected = rng.choice(RESOLUTIONS)
+    case = rng.choice(CASES)
+    flagged = case == "escalated_flagged"
+    opened = rng.random() < 0.5
     # randint is inclusive, so the boundaries (day 30, exactly $100) do occur.
-    if expected == "denied":
-        days = rng.randint(REFUND_WINDOW_DAYS + 1, 90)
-        amount = rng.randint(5_00, 300_00)
-    elif expected == "escalated":
-        days = rng.randint(1, REFUND_WINDOW_DAYS)
-        amount = rng.randint(AUTO_REFUND_LIMIT_CENTS + 1, 300_00)
+    if case == "denied":
+        days, amount = rng.randint(REFUND_WINDOW_DAYS + 1, 90), rng.randint(5_00, 300_00)
+    elif case == "escalated_flagged":
+        # Any order at all: a flagged customer is escalated even when the
+        # order would otherwise be refunded or denied.
+        days, amount = rng.randint(1, 90), rng.randint(5_00, 300_00)
+    elif case == "escalated_over_limit":
+        days, amount = rng.randint(1, REFUND_WINDOW_DAYS), rng.randint(AUTO_REFUND_LIMIT_CENTS + 1, 300_00)
     else:
-        days = rng.randint(1, REFUND_WINDOW_DAYS)
-        amount = rng.randint(5_00, AUTO_REFUND_LIMIT_CENTS)
+        days, amount = rng.randint(1, REFUND_WINDOW_DAYS), rng.randint(5_00, AUTO_REFUND_LIMIT_CENTS)
+        opened = case == "refunded_half"
 
     customer = f"C{rng.randint(100, 999)}"
-    order_id, other_id = rng.sample(range(1000, 9999), 2)
-    order_id, other_id = f"A{order_id}", f"A{other_id}"
+    items = rng.sample(ITEMS, 3)
+    ids = [f"A{n}" for n in rng.sample(range(1000, 9999), 3)]
 
-    def order(amount_cents, days_since_delivery):
+    def order(item, amount_cents, days_since_delivery, opened):
         return {
             "customer": customer,
-            "item": rng.choice(ITEMS),
+            "item": item,
             "amount_cents": amount_cents,
             "days_since_delivery": days_since_delivery,
+            "opened": opened,
             "refunded_cents": 0,
             "escalated": False,
         }
 
-    orders = {
-        order_id: order(amount, days),
-        # A second order on the same account. It is refundable, so an agent
-        # that acts on the wrong order moves real (simulated) money.
-        other_id: order(rng.randint(5_00, 100_00), rng.randint(1, 30)),
-    }
+    orders = {ids[0]: order(items[0], amount, days, opened)}
+    # Two more orders on the same account. They are refundable, so an agent
+    # that acts on the wrong order moves real (simulated) money.
+    for oid, item in zip(ids[1:], items[1:]):
+        orders[oid] = order(item, rng.randint(5_00, 100_00), rng.randint(1, 30), rng.random() < 0.5)
+    orders = dict(sorted(orders.items()))  # so the right order is not always listed first
     # What the customer says is not correlated with the truth. The agent has to
-    # look the order up instead of trusting the ticket.
+    # check the records instead of trusting the ticket.
     claim = rng.choice(CLAIMS)
-    message = f"I want a refund for order {order_id}. {claim}".strip()
-    return Task(f"refund-{seed}", customer, order_id, message, orders, expected)
+    message = f"I want a refund for my {items[0]}. {claim}".strip()
+    expected = case.split("_")[0]
+    return Task(f"refund-{seed}", customer, ids[0], message, orders, flagged, case, expected)
 
 
 class RefundDeskEnv:
     """reset(seed) -> obs;  step(action) -> (obs, reward, terminated, truncated, info)"""
 
-    def __init__(self, reward_fn, max_steps: int = 6):
+    def __init__(self, reward_fn, max_steps: int = 8):
         self.reward_fn = reward_fn
         self.max_steps = max_steps
         self.task = None
@@ -152,7 +176,8 @@ class RefundDeskEnv:
             reward = self.reward_fn(ep)
             # `info` is for the training loop and for logging. A policy must
             # never read it: it contains the answer.
-            info = {"true_success": is_true_success(ep), "expected": self.task.expected}
+            info = {"true_success": is_true_success(ep), "expected": self.task.expected,
+                    "case": self.task.case}
         return self._obs(result), reward, terminated, truncated, info
 
     def episode(self, truncated: bool = False) -> Episode:
@@ -165,8 +190,7 @@ class RefundDeskEnv:
         return {
             "ticket": {
                 "customer": self.task.customer,
-                "order_id": self.task.order_id,
-                "message": self.task.message,
+                "message": self.task.message,   # names the item, not the order
             },
             "last_result": copy.deepcopy(last_result),
             "steps_left": self.max_steps - len(self.steps),
@@ -201,6 +225,20 @@ class RefundDeskEnv:
         if order is None:
             return None, self._invalid(tool, f"no such order: {args.get('order_id')!r}")
         return order, None
+
+    def _tool_list_orders(self, args):
+        customer = args.get("customer")
+        found = [{"order_id": oid, "item": o["item"]}
+                 for oid, o in self.db.items() if o["customer"] == customer]
+        if not found:
+            return self._invalid("list_orders", f"no orders for customer {customer!r}")
+        return {"ok": True, "tool": "list_orders", "orders": found}
+
+    def _tool_check_customer(self, args):
+        if args.get("customer") != self.task.customer:
+            return self._invalid("check_customer", f"no such customer: {args.get('customer')!r}")
+        return {"ok": True, "tool": "check_customer", "customer": self.task.customer,
+                "flagged": self.task.flagged}
 
     def _tool_lookup_order(self, args):
         order, err = self._order("lookup_order", args)
@@ -245,15 +283,23 @@ class RefundDeskEnv:
 # A scripted or tabular policy consumes the observation dict directly. An LLM
 # needs it as text, and its text output needs to be turned back into an action.
 
-SYSTEM_PROMPT = f"""You are a refund desk agent. Policy:
-- Delivered more than {REFUND_WINDOW_DAYS} days ago: deny.
-- Otherwise, amount_cents over {AUTO_REFUND_LIMIT_CENTS} (${AUTO_REFUND_LIMIT_CENTS // 100}): escalate to a human.
-- Otherwise: refund the full amount.
+SYSTEM_PROMPT = f"""You are a refund desk agent. Customers name the item, not the
+order number: find their order with list_orders, then look it up.
+
+Policy, checked in this order:
+1. Customer flagged for fraud (see check_customer): escalate to a human.
+2. Delivered more than {REFUND_WINDOW_DAYS} days ago: deny.
+3. amount_cents over {AUTO_REFUND_LIMIT_CENTS} (${AUTO_REFUND_LIMIT_CENTS // 100}): escalate to a human.
+4. The item was opened: refund half the amount, rounded down to whole cents.
+5. Otherwise: refund the full amount.
 All amounts are in cents: amount_cents {AUTO_REFUND_LIMIT_CENTS} means ${AUTO_REFUND_LIMIT_CENTS // 100}.
-Customers can be wrong about dates. Check the order.
+Customers can be wrong about dates and about whether they opened the item.
+Check the records.
 
 Answer with exactly one JSON tool call per turn:
+{{"tool": "list_orders", "args": {{"customer": "..."}}}}
 {{"tool": "lookup_order", "args": {{"order_id": "..."}}}}
+{{"tool": "check_customer", "args": {{"customer": "..."}}}}
 {{"tool": "issue_refund", "args": {{"order_id": "...", "amount_cents": 1234}}}}
 {{"tool": "escalate", "args": {{"order_id": "..."}}}}
 {{"tool": "reply", "args": {{"resolution": "refunded|denied|escalated", "message": "..."}}}}"""

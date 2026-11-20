@@ -11,6 +11,9 @@ from mlx_lm.sample_utils import make_sampler
 from refund_env.env import SYSTEM_PROMPT, parse_action, render_prompt
 
 MODEL = "mlx-community/gemma-4-e2b-it-4bit"
+# How Gemma writes its scratch paper and ends its turn. Training examples use
+# the same markers, so the model learns in the format it already speaks.
+THINK_START, THINK_END, END_OF_TURN = "<|channel>thought\n", "<channel|>", "<turn|>"
 
 
 class LocalPolicy:
@@ -32,10 +35,10 @@ class LocalPolicy:
         prompt = self.tokenizer.apply_chat_template(
             self.messages, add_generation_prompt=True, tokenize=False)
         text = generate(self.model, self.tokenizer, prompt=prompt,
-                        max_tokens=600, sampler=self.sampler)
+                        max_tokens=1024, sampler=self.sampler)
         self.trace.append((prompt, text))
         # Gemma may think out loud first, inside <|channel>thought ... <channel|>.
         # That is its scratch paper; only what comes after it is the answer.
-        text = text.split("<channel|>")[-1].strip()
+        text = text.split(THINK_END)[-1].strip()
         self.messages.append({"role": "assistant", "content": text})
         return parse_action(text)
