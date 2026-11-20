@@ -26,6 +26,9 @@ Tools: `list_orders`, `lookup_order`, `check_customer`, `issue_refund`,
 `escalate`, and `reply`, which ends the ticket. What the customer says about
 dates or opening the item is not reliable; only the records are.
 
+New to this? Start with [docs/](docs/README.md): diagrams of the shop, the
+trainees, and what each step does, from start to finish.
+
 ## Setup
 
 Steps 1 and 2 need only Python 3.10 or newer. Nothing to install.
@@ -62,6 +65,7 @@ tests/             one test per way an environment can quietly go wrong
 results/           saved exam scores, one file per trainee
 out/               files the scripts create (not in git; safe to delete)
 LESSONS.md         what went wrong while building this, and why
+docs/              how it all fits together, with diagrams
 ```
 
 ## The steps, in order
@@ -95,6 +99,7 @@ python3 -m unittest discover tests -v
 
 ## Reading order
 
+0. [docs/](docs/README.md): the diagrams, for the big picture first.
 1. `refund_env/env.py`: the top of the file lists the parts every environment has.
 2. `refund_env/rewards.py`: the two managers, side by side.
 3. `refund_env/runner.py`: the episode loop, 15 lines.
