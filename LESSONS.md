@@ -171,3 +171,24 @@ and they were good for the right reason (lesson 4).
 the reasoning written out, and reinforcement to polish what it already does.
 The order matters. The move from 99 to 100 is a single ticket, so it is
 within noise: here supervised training did nearly all the work.
+
+## 13. A perfect score needs a changed test
+
+**What happened.** After training, Gemma scored 99 and 100. But every ticket
+it practised on and every exam ticket used the same two numbers: deny after 30
+days, escalate over 10000 cents. Step 8 kept the same 100 tickets and changed
+the rulebook to 14 days and 5000 cents, which changes the right answer on 36
+tickets. With no new training, both trained versions of Gemma scored 100 and
+got all 36 changed tickets right. A hand-written expert that keeps the old
+numbers scores 64.
+
+**Why.** The expert's reasoning in step 5 always quoted the numbers next to
+the rule ("Rule 2: delivered 26 days ago, within 30"). Gemma learned the
+pattern "compare the order with the number in the rulebook", and on the new
+exam it wrote "more than 14, so I deny". The examples taught a way of
+thinking, not just answers.
+
+**Lesson.** A high score on tickets like the training tickets doesn't show
+what was learned. Change something the trainee should handle and see whether
+it adapts. This test only changed numbers; a new rule, or the rules in a new
+order, would test more.

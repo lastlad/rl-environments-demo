@@ -73,14 +73,26 @@ class Episode:
     invalid_actions: int
 
 
+@dataclass(frozen=True)
+class Rules:
+    """The two numbers in the shop's policy. Change them and the right answer
+    to many tickets changes too (step 8)."""
+    window_days: int = REFUND_WINDOW_DAYS    # rule 2: deny if delivered more than this many days ago
+    limit_cents: int = AUTO_REFUND_LIMIT_CENTS  # rule 3: escalate if the amount is over this
+
+
+RULES = Rules()    # the normal rules: every trainee practised on these
+CHANGED_RULES = Rules(window_days=14, limit_cents=50_00)   # step 8's exam
+
+
 def expected_case(flagged: bool, days_since_delivery: int, amount_cents: int,
-                  opened: bool) -> str:
+                  opened: bool, rules: Rules = RULES) -> str:
     """The policy, written once. The task generator is tested against it."""
     if flagged:
         return "escalated_flagged"
-    if days_since_delivery > REFUND_WINDOW_DAYS:
+    if days_since_delivery > rules.window_days:
         return "denied"
-    if amount_cents > AUTO_REFUND_LIMIT_CENTS:
+    if amount_cents > rules.limit_cents:
         return "escalated_over_limit"
     return "refunded_half" if opened else "refunded_full"
 
@@ -90,8 +102,13 @@ def refund_due_cents(order: dict) -> int:
     return order["amount_cents"] // 2 if order["opened"] else order["amount_cents"]
 
 
-def make_task(seed: int) -> Task:
-    """Same seed -> same task, always. Uses its own RNG, never the global one."""
+def make_task(seed: int, rules: Rules = RULES) -> Task:
+    """Same seed -> same task, always. Uses its own RNG, never the global one.
+
+    The customer, the orders and the message are always drawn the same way, so
+    a seed gives the same ticket under any rules. Only the right answer
+    (`case`, `expected`) depends on the rules.
+    """
     rng = random.Random(seed)
     case = rng.choice(CASES)
     flagged = case == "escalated_flagged"
@@ -134,6 +151,11 @@ def make_task(seed: int) -> Task:
     # check the records instead of trusting the ticket.
     claim = rng.choice(CLAIMS)
     message = f"I want a refund for my {items[0]}. {claim}".strip()
+    # Under the normal rules this is the case picked above; under other rules
+    # the same facts can call for a different answer.
+    real = orders[ids[0]]
+    case = expected_case(flagged, real["days_since_delivery"], real["amount_cents"],
+                         real["opened"], rules)
     expected = case.split("_")[0]
     return Task(f"refund-{seed}", customer, ids[0], message, orders, flagged, case, expected)
 
@@ -141,14 +163,15 @@ def make_task(seed: int) -> Task:
 class RefundDeskEnv:
     """reset(seed) -> obs;  step(action) -> (obs, reward, terminated, truncated, info)"""
 
-    def __init__(self, reward_fn, max_steps: int = 8):
+    def __init__(self, reward_fn, max_steps: int = 8, rules: Rules = RULES):
         self.reward_fn = reward_fn
         self.max_steps = max_steps
+        self.rules = rules
         self.task = None
         self.done = True
 
     def reset(self, seed: int) -> dict:
-        self.task = make_task(seed)
+        self.task = make_task(seed, self.rules)
         self.db = copy.deepcopy(self.task.orders)  # nothing survives from the last episode
         self.steps = []
         self.reply = None
@@ -283,16 +306,19 @@ class RefundDeskEnv:
 # A scripted or tabular policy consumes the observation dict directly. An LLM
 # needs it as text, and its text output needs to be turned back into an action.
 
-SYSTEM_PROMPT = f"""You are a refund desk agent. Customers name the item, not the
+def system_prompt(rules: Rules = RULES) -> str:
+    """The rulebook pinned to the wall: what every model reads first."""
+    window, limit = rules.window_days, rules.limit_cents
+    return f"""You are a refund desk agent. Customers name the item, not the
 order number: find their order with list_orders, then look it up.
 
 Policy, checked in this order:
 1. Customer flagged for fraud (see check_customer): escalate to a human.
-2. Delivered more than {REFUND_WINDOW_DAYS} days ago: deny.
-3. amount_cents over {AUTO_REFUND_LIMIT_CENTS} (${AUTO_REFUND_LIMIT_CENTS // 100}): escalate to a human.
+2. Delivered more than {window} days ago: deny.
+3. amount_cents over {limit} (${limit // 100}): escalate to a human.
 4. The item was opened: refund half the amount, rounded down to whole cents.
 5. Otherwise: refund the full amount.
-All amounts are in cents: amount_cents {AUTO_REFUND_LIMIT_CENTS} means ${AUTO_REFUND_LIMIT_CENTS // 100}.
+All amounts are in cents: amount_cents {limit} means ${limit // 100}.
 Customers can be wrong about dates and about whether they opened the item.
 Check the records.
 
@@ -303,6 +329,9 @@ Answer with exactly one JSON tool call per turn:
 {{"tool": "issue_refund", "args": {{"order_id": "...", "amount_cents": 1234}}}}
 {{"tool": "escalate", "args": {{"order_id": "..."}}}}
 {{"tool": "reply", "args": {{"resolution": "refunded|denied|escalated", "message": "..."}}}}"""
+
+
+SYSTEM_PROMPT = system_prompt(RULES)
 
 
 def render_prompt(obs: dict) -> str:

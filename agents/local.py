@@ -17,17 +17,19 @@ THINK_START, THINK_END, END_OF_TURN = "<|channel>thought\n", "<channel|>", "<tur
 
 
 class LocalPolicy:
-    def __init__(self, model: str = MODEL, adapter_path: str | None = None, temp: float = 0.0):
+    def __init__(self, model: str = MODEL, adapter_path: str | None = None, temp: float = 0.0,
+                 system_prompt: str = SYSTEM_PROMPT):
         # adapter_path: fine-tuned weights to load on top of the base model.
         # temp 0 = always pick the most likely word (use this for testing).
         self.model_name = model
         self.model, self.tokenizer = load(model, adapter_path=adapter_path)
         self.sampler = make_sampler(temp=temp)
+        self.system_prompt = system_prompt   # the rulebook
         self.messages = []
         self.trace = []  # (prompt, full output including thinking) for each step
 
     def reset(self):
-        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.messages = [{"role": "system", "content": self.system_prompt}]
         self.trace = []
 
     def act(self, obs):

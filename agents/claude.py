@@ -14,10 +14,12 @@ MODEL = "claude-haiku-5-5"
 
 
 class ClaudePolicy:
-    def __init__(self, client: anthropic.Anthropic | None = None, model: str = MODEL):
+    def __init__(self, client: anthropic.Anthropic | None = None, model: str = MODEL,
+                 system_prompt: str = SYSTEM_PROMPT):
         # Anthropic() reads ANTHROPIC_API_KEY from the environment.
         self.client = client or anthropic.Anthropic()
         self.model = model
+        self.system_prompt = system_prompt   # the rulebook
         self.messages = []
         self.input_tokens = 0
         self.output_tokens = 0
@@ -30,7 +32,7 @@ class ClaudePolicy:
         response = self.client.beta.messages.create(
             model=self.model,
             max_tokens=16000,
-            system=SYSTEM_PROMPT,
+            system=self.system_prompt,
             output_config={"effort": "low"},  # the task is simple; keeps cost down
             # If the model declines a request, the API retries it on a fallback model.
             betas=["server-side-fallback-2026-07-01"],
@@ -60,13 +62,14 @@ class ClaudeLoginPolicy:
     with text, exactly like ClaudePolicy.
     """
 
-    def __init__(self, model: str = MODEL):
+    def __init__(self, model: str = MODEL, system_prompt: str = SYSTEM_PROMPT):
         import os
         import shutil
         self.cli = shutil.which("claude") or os.path.expanduser("~/.claude/local/claude")
         if not os.path.exists(self.cli):
             raise RuntimeError("Claude Code CLI not found. Install it and run `claude` once to log in.")
         self.model = model
+        self.system_prompt = system_prompt   # the rulebook
         self.turns = []
         self.input_tokens = 0
         self.output_tokens = 0
@@ -83,7 +86,7 @@ class ClaudeLoginPolicy:
         prompt = "\n\n".join(self.turns) + "\n\nReply with your next tool call."
         proc = subprocess.run(
             [self.cli, "-p", prompt,
-             "--system-prompt", SYSTEM_PROMPT,
+             "--system-prompt", self.system_prompt,
              "--model", self.model,
              "--tools", "",                 # no Claude Code tools: text only
              "--strict-mcp-config",         # no connectors

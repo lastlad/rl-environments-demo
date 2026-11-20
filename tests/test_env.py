@@ -12,8 +12,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from agents.toy import OraclePolicy, RandomPolicy  # noqa: E402
 from refund_env import (RefundDeskEnv, make_task, naive_reward, parse_action,  # noqa: E402
                         rollout, run_episode, verified_reward)
-from refund_env.env import CASES, SYSTEM_PROMPT, expected_case  # noqa: E402
-from refund_env.exam import EXAM_TICKETS, run_exam  # noqa: E402
+from refund_env.env import (CASES, CHANGED_RULES, RULES, SYSTEM_PROMPT,  # noqa: E402
+                            expected_case, system_prompt)
+from refund_env.exam import EXAM_SEED_START, EXAM_TICKETS, run_exam  # noqa: E402
 
 
 def call(tool, **args):
@@ -281,6 +282,47 @@ class RewardIntegrity(unittest.TestCase):
         _, reward, _, _, info = env.step(call("reply", resolution="refunded"))
         self.assertFalse(info["true_success"])
         self.assertLess(reward, 0)
+
+
+
+class ChangedRules(unittest.TestCase):
+    """Step 8: the same tickets under a different rulebook."""
+
+    def test_same_ticket_only_the_answer_changes(self):
+        for seed in range(EXAM_SEED_START, EXAM_SEED_START + 100):
+            old, new = make_task(seed), make_task(seed, CHANGED_RULES)
+            self.assertEqual((old.customer, old.message, old.orders, old.flagged),
+                             (new.customer, new.message, new.orders, new.flagged))
+
+    def test_some_answers_change(self):
+        changed = sum(make_task(s).case != make_task(s, CHANGED_RULES).case
+                      for s in range(EXAM_SEED_START, EXAM_SEED_START + 100))
+        self.assertGreater(changed, 20)   # otherwise the exam tests nothing
+
+    def test_new_numbers_follow_the_new_rules(self):
+        r = CHANGED_RULES
+        self.assertEqual(expected_case(False, r.window_days + 1, 5_00, False, r), "denied")
+        self.assertEqual(expected_case(False, r.window_days, r.limit_cents + 1, False, r),
+                         "escalated_over_limit")
+        self.assertEqual(expected_case(False, r.window_days, r.limit_cents, True, r), "refunded_half")
+
+    def test_rulebook_states_the_new_numbers(self):
+        text = system_prompt(CHANGED_RULES)
+        self.assertIn(f"more than {CHANGED_RULES.window_days} days", text)
+        self.assertIn(f"amount_cents over {CHANGED_RULES.limit_cents}", text)
+        self.assertNotIn(str(RULES.limit_cents), text)
+
+    def test_expert_reading_the_new_rules_gets_everything_right(self):
+        env = RefundDeskEnv(verified_reward, rules=CHANGED_RULES)
+        for seed in range(EXAM_SEED_START, EXAM_SEED_START + 100):
+            _, info = play(env, OraclePolicy(CHANGED_RULES), seed)
+            self.assertTrue(info["true_success"], seed)
+
+    def test_score_card_counts_old_habits(self):
+        card = run_exam(OraclePolicy(RULES), "x", 100, show=False, rules=CHANGED_RULES, save=False)
+        c = card["rules_changed_the_answer"]
+        self.assertEqual((c["right"], c["followed_old_rules"]), (0, c["tickets"]))
+        self.assertEqual(card["right"], 100 - c["tickets"])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import random
 
-from refund_env.env import AUTO_REFUND_LIMIT_CENTS, REFUND_WINDOW_DAYS
+from refund_env.env import RULES, Rules
 
 MACROS = ("list", "lookup", "check", "refund_full", "refund_half", "escalate",
           "reply_refunded", "reply_denied", "reply_escalated")
@@ -14,6 +14,9 @@ MACROS = ("list", "lookup", "check", "refund_full", "refund_half", "escalate",
 
 class Memory:
     """What the agent has learned so far this episode, built from observations."""
+
+    def __init__(self, rules: Rules = RULES):
+        self.rules = rules   # the policy numbers to compare the order against
 
     def reset(self):
         self.order_id = None   # found by list_orders: the order whose item the customer named
@@ -46,8 +49,8 @@ class Memory:
         observation and the policy text instead of these hand-made features."""
         looked = None
         if self.order is not None:
-            looked = (self.order["days_since_delivery"] <= REFUND_WINDOW_DAYS,
-                      self.order["amount_cents"] > AUTO_REFUND_LIMIT_CENTS,
+            looked = (self.order["days_since_delivery"] <= self.rules.window_days,
+                      self.order["amount_cents"] > self.rules.limit_cents,
                       self.order["opened"])
         return (self.order_id is not None, looked, self.flagged, self.refunded, self.escalated)
 
@@ -80,8 +83,8 @@ class OraclePolicy:
     in plain words. Step 5 uses it to teach a model to think, not just to copy.
     """
 
-    def __init__(self):
-        self.mem = Memory()
+    def __init__(self, rules: Rules = RULES):
+        self.mem = Memory(rules)
         self.thought = ""
 
     def reset(self):
@@ -113,19 +116,20 @@ class OraclePolicy:
     def rules(self):
         """Walk through the policy for this order, one rule at a time."""
         o, flagged = self.mem.order, self.mem.flagged
+        window, limit = self.mem.rules.window_days, self.mem.rules.limit_cents
         days, amount = o["days_since_delivery"], o["amount_cents"]
         if flagged:
             return "Rule 1: the customer is flagged for fraud, so I escalate to a human."
         lines = ["Rule 1: the customer is not flagged."]
-        if days > REFUND_WINDOW_DAYS:
-            lines.append(f"Rule 2: delivered {days} days ago, more than {REFUND_WINDOW_DAYS}, so I deny.")
+        if days > window:
+            lines.append(f"Rule 2: delivered {days} days ago, more than {window}, so I deny.")
             return " ".join(lines)
-        lines.append(f"Rule 2: delivered {days} days ago, within {REFUND_WINDOW_DAYS}.")
-        if amount > AUTO_REFUND_LIMIT_CENTS:
-            lines.append(f"Rule 3: amount_cents {amount} is over {AUTO_REFUND_LIMIT_CENTS}, "
+        lines.append(f"Rule 2: delivered {days} days ago, within {window}.")
+        if amount > limit:
+            lines.append(f"Rule 3: amount_cents {amount} is over {limit}, "
                          "so I escalate to a human.")
             return " ".join(lines)
-        lines.append(f"Rule 3: amount_cents {amount} is not over {AUTO_REFUND_LIMIT_CENTS}.")
+        lines.append(f"Rule 3: amount_cents {amount} is not over {limit}.")
         if o["opened"]:
             lines.append(f"Rule 4: the item was opened, so I refund half: "
                          f"{amount} // 2 = {amount // 2} cents.")

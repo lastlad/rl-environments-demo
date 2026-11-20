@@ -60,7 +60,7 @@ agents/        THE TRAINEES: who can sit at the desk
   local.py         Gemma, a small model that runs on your Mac
   local_trainer.py the fine-tuning helper used by step 6
 
-step1 ... step7    scripts to run, in learning order
+step1 ... step8    scripts to run, in learning order
 tests/             one test per way an environment can quietly go wrong
 results/           saved exam scores, one file per trainee
 out/               files the scripts create (not in git; safe to delete)
@@ -80,6 +80,7 @@ docs/              how it all fits together, with diagrams
 | 6 | `.venv/bin/python step6_reinforcement_finetune.py` | Teach Gemma using only the careful manager's score | about 2 hours |
 | 6b | `.venv/bin/python step6_reinforcement_finetune.py --after-sft` | The same, starting from step 5's weights | about 70 minutes |
 | 7 | `python3 step7_show_results.py` | Every saved exam score in one table | seconds |
+| 8 | `.venv/bin/python step8_changed_rules.py 100 out/sft_adapter` | The same exam with new rule numbers: did Gemma learn the rules, or memorise them? | about 12 minutes per trainee |
 
 Steps 3 and 4 work 6 tickets by default, as a quick look. Add `100` to sit the
 full exam, which saves the score to `results/`:
@@ -144,6 +145,35 @@ How to read it:
   ticket: 100 of 100. Supervised training taught the step that was missing;
   reinforcement then had good attempts to keep. See lesson 12.
 
+### Changed rules: learned or memorised? (step 8)
+
+Every ticket Gemma practised on used the same two numbers: deny after 30 days,
+escalate over 10000 cents. Step 8 gives the same 100 exam tickets with a new
+rulebook (deny after **14** days, escalate over **5000** cents) and no new
+training. The new rules change the right answer on 36 tickets. Saved in
+`results/changed_rules/`:
+
+| Trainee | Done right | refunded_full | refunded_half | escalated_over_limit | escalated_flagged | denied | Said it, did not do it | Wrongful refunds | Answer changed: done right | Followed the old rules |
+|---|---|---|---|---|---|---|---|---|---|---|
+| gemma_untrained | 60/100 | 2/3 | 3/3 | 19/23 | 10/18 | 26/53 | 0 | 10 | 23/36 | 9/36 |
+| gemma_sft | 100/100 | 3/3 | 3/3 | 23/23 | 18/18 | 53/53 | 0 | 0 | 36/36 | 0/36 |
+| gemma_sft_then_rft | 100/100 | 3/3 | 3/3 | 23/23 | 18/18 | 53/53 | 0 | 0 | 36/36 | 0/36 |
+
+The last two columns are the 36 changed tickets: done right under the new
+rules, or done the way the old rules said.
+
+- **Trained Gemma read the new rulebook.** All 36 changed tickets right, none
+  done the old way. Its reasoning shows why: *"delivered 30 days ago, more than
+  14, so I deny."* It takes the number from the rulebook, not from memory.
+- **Untrained Gemma** still never checks the customer, and it gets worse (60)
+  because more than half the tickets are now denials, which it handles badly.
+- For comparison, a hand-written expert that keeps the old numbers scores 64,
+  with all 36 changed tickets done the old way. Run `python3
+  step8_changed_rules.py` to see it.
+
+This tests one kind of change: new numbers in the same rules. A new rule, or
+the same rules in a different order, would be a harder test.
+
 ### The first, easier shop
 
 The customer gave the order number, and there were no fraud flags or opened
@@ -178,6 +208,10 @@ so practice is quicker).
 | `sft_rft_adapter/` | step 6b | Gemma's weights after step 5 and then step 6 |
 
 ## Things to try
+
+- In `refund_env/env.py`, try other numbers in `CHANGED_RULES`, or swap rules 1
+  and 2 so old orders are denied before the fraud check. Update `expected_case`,
+  the expert and the rulebook text, then run step 8 again.
 
 - In `refund_env/rewards.py`, set `STEP_COST = 0` and rerun step 2. Does the
   naive reward still get exploited?

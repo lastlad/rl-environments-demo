@@ -1,6 +1,6 @@
 # 3. The steps
 
-Seven scripts, run in order. Each one puts a trainee at the desk for some
+Eight scripts, run in order. Each one puts a trainee at the desk for some
 reason: to show the shop, to test, to record, or to train.
 
 ```mermaid
@@ -18,7 +18,10 @@ flowchart LR
     subgraph D["Compare"]
         S4b["4 again, trained Gemma"] --> S7["7 results table"]
     end
-    A --> B --> C --> D
+    subgraph E["Test what was learned"]
+        S8["8 changed rules"]
+    end
+    A --> B --> C --> D --> E
 ```
 
 | Step | Who sits at the desk | Which manager | What comes out |
@@ -30,6 +33,7 @@ flowchart LR
 | 5 | The expert (recorded), then Gemma studies it | careful | `out/sft_data/`, `out/sft_adapter/` |
 | 6 | Gemma, practising | careful | `out/sft_rft_data/`, `out/sft_rft_adapter/` |
 | 7 | Nobody | none | The results table |
+| 8 | The expert, then Gemma, with a new rulebook | careful, by the new rules | `results/changed_rules/` |
 
 ---
 
@@ -348,6 +352,60 @@ The table is in the main [README](../README.md#results).
 
 ---
 
+## Step 8: change the rules
+
+`.venv/bin/python step8_changed_rules.py 100 out/sft_adapter`
+
+**Why:** trained Gemma scored 100, but it practised and sat the exam with the
+same two numbers every time: deny after 30 days, escalate over 10000 cents. A
+perfect score can't tell whether it learned to *read the rules* or
+*memorised 30 and 10000*. Step 8 changes the numbers and looks.
+
+The tickets stay the same. Only the rulebook and the right answers change:
+
+```mermaid
+flowchart LR
+    SEED["exam seed"] --> T["the same ticket:<br/>same customer, orders, message"]
+    T --> OLD["normal rules<br/>deny after 30 days<br/>escalate over 10000"]
+    T --> NEW["changed rules<br/>deny after 14 days<br/>escalate over 5000"]
+    OLD --> A1["right answer,<br/>e.g. refund in full"]
+    NEW --> A2["right answer,<br/>e.g. deny"]
+```
+
+`make_task(seed, rules)` draws the ticket the same way under any rules, then
+works out the right answer from the rules it was given. On 36 of the 100 exam
+tickets, the answer changes.
+
+```mermaid
+sequenceDiagram
+    participant S as step8
+    participant G as Gemma (LocalPolicy)
+    participant X as exam.py
+    participant M as careful manager
+
+    S->>G: load trained weights,<br/>hand it the NEW rulebook
+    S->>X: run_exam(Gemma, rules = changed)
+    loop 100 exam tickets
+        X->>G: the same ticket as always
+        G-->>X: tool calls
+        X->>M: grade by the NEW rules
+        Note over X: on a changed ticket, also check:<br/>would the OLD rules have passed it?
+    end
+    X-->>S: score card, plus<br/>"answer changed: done right" and<br/>"followed the old rules"
+```
+
+Run without arguments, step 8 shows what changes, and how two hand-written
+experts do: one reading the new rulebook (100) and one keeping the old numbers
+(64, every changed ticket done the old way). That second expert is what
+memorising looks like.
+
+**What happened:** trained Gemma, after step 5 and after step 5 then step 6,
+got all 36 changed tickets right and none the old way. Its reasoning quotes the
+new number: *"delivered 30 days ago, more than 14, so I deny."* It learned to
+read the rulebook.
+
+---
+
 ## The whole journey of Gemma
 
 ```mermaid
@@ -357,6 +415,8 @@ flowchart LR
     U -->|"step 6 alone"| R["79<br/>still never checks"]
     U -->|"step 5 with reasoning"| S["99<br/>checks and thinks"]
     S -->|"step 6 --after-sft"| SR["100<br/>matches Claude"]
+    S -->|"step 8: new rule numbers"| G1["100<br/>reads the new rules"]
+    SR -->|"step 8: new rule numbers"| G2["100<br/>reads the new rules"]
 ```
 
 In shop terms: first the trainee shadows an expert who explains every decision

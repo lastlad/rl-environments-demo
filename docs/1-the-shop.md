@@ -35,7 +35,7 @@ flowchart TB
 | Ticket maker | `make_task(seed)` in `env.py` | The front door: a new customer walks in |
 | Database | `env.db` | The filing cabinet with this customer's 3 orders |
 | Tools | `_tool_...` functions in `env.py` | The buttons on the desk computer |
-| Rules | `SYSTEM_PROMPT` in `env.py` | The rulebook pinned to the wall |
+| Rules | `Rules` and `system_prompt()` in `env.py` | The rulebook pinned to the wall. Its two numbers (30 days, 10000 cents) are a setting, so step 8 can change them |
 | Managers | `rewards.py` | The person who checks the work afterwards |
 | Desk | `run_episode` in `runner.py` | Where one ticket gets worked |
 | Exam | `exam.py` | Exam day: 100 set tickets, scored |

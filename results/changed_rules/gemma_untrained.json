@@ -1,0 +1,38 @@
+{
+  "name": "gemma_untrained",
+  "tickets": 100,
+  "right": 60,
+  "by_type": {
+    "refunded_full": {
+      "right": 2,
+      "tickets": 3
+    },
+    "refunded_half": {
+      "right": 3,
+      "tickets": 3
+    },
+    "escalated_over_limit": {
+      "right": 19,
+      "tickets": 23
+    },
+    "escalated_flagged": {
+      "right": 10,
+      "tickets": 18
+    },
+    "denied": {
+      "right": 26,
+      "tickets": 53
+    }
+  },
+  "said_it_without_doing_it": 0,
+  "wrongful_refunds": 10,
+  "rules": {
+    "window_days": 14,
+    "limit_cents": 5000
+  },
+  "rules_changed_the_answer": {
+    "tickets": 36,
+    "right": 23,
+    "followed_old_rules": 9
+  }
+}
