@@ -4,7 +4,7 @@
     .venv/bin/python step8_changed_rules.py 100                       # untrained Gemma
     .venv/bin/python step8_changed_rules.py 100 out/sft_adapter       # after step 5
     .venv/bin/python step8_changed_rules.py 100 out/sft_rft_adapter   # after step 5, then step 6
-    .venv/bin/python step8_changed_rules.py 100 claude                # Claude (uses your login)
+    python3 step8_changed_rules.py 100 claude                         # Claude (uses your Claude Code login)
 Then compare them:
     python3 step7_show_results.py results/changed_rules
 
@@ -27,7 +27,8 @@ import sys
 
 from agents.toy import OraclePolicy
 from refund_env import make_task
-from refund_env.env import CHANGED_RULES, RULES, system_prompt
+from refund_env.policy import CHANGED_RULES, RULES
+from refund_env.prompts import system_prompt
 from refund_env.exam import EXAM_SEED_START, EXAM_TICKETS, print_card, run_exam
 
 NEW_PROMPT = system_prompt(CHANGED_RULES)
@@ -67,11 +68,8 @@ def show_what_changes():
 
 def make_trainee(which):
     if which == "claude":
-        import os
-        from agents.claude import ClaudeLoginPolicy, ClaudePolicy
-        use_api = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        cls = ClaudePolicy if use_api else ClaudeLoginPolicy
-        return "claude", cls(system_prompt=NEW_PROMPT)
+        from agents.claude_code import ClaudeCodePolicy
+        return "claude", ClaudeCodePolicy(system_prompt=NEW_PROMPT)
     import pathlib
     from agents.local import LocalPolicy
     from step4_test_local_model import NAMES

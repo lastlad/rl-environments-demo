@@ -42,8 +42,7 @@ from refund_env.exam import run_exam
 
 HERE = pathlib.Path(__file__).parent
 AFTER_SFT = "--after-sft" in sys.argv
-SFT_ADAPTER = HERE / "out" / "sft_adapter"   # step 5's weights
-# Where this script saves the weights and its training data.
+SFT_ADAPTER = HERE / "out" / "sft_adapter"
 ADAPTER = HERE / "out" / ("sft_rft_adapter" if AFTER_SFT else "rft_adapter")
 DATA = HERE / "out" / ("sft_rft_data" if AFTER_SFT else "rft_data")
 
@@ -68,7 +67,7 @@ def practise(policy, seeds):
     for seed in seeds:
         for _ in range(ATTEMPTS):
             reward, info = run_episode(env, policy, seed)
-            clean = all(s["result"]["ok"] for s in env.steps)  # no rejected actions
+            clean = all(s["result"]["ok"] for s in env.steps)
             if info["true_success"] and clean:
                 # policy.trace = what the model saw and wrote (thinking included)
                 kept.append((info["expected"], list(policy.trace)))
@@ -83,7 +82,7 @@ def fine_tune(episodes):
     lines = [json.dumps({"prompt": prompt, "output": output + END_OF_TURN})
              for _, trace in episodes for prompt, output in trace]
     (DATA / "train.jsonl").write_text("\n".join(lines) + "\n")
-    iters = min(len(lines), 200)   # about one pass, capped to keep rounds short
+    iters = min(len(lines), 200)
     subprocess.run([sys.executable, "-m", "agents.local_trainer",
                     str(DATA / "train.jsonl"), str(ADAPTER), str(iters)],
                    check=True, capture_output=True, cwd=HERE)
@@ -96,7 +95,6 @@ if __name__ == "__main__":
     if AFTER_SFT:
         if not SFT_ADAPTER.exists():
             sys.exit("No step 5 weights in out/sft_adapter. Run step 5 first.")
-        # Start from a copy of step 5's weights; training continues from them.
         shutil.copytree(SFT_ADAPTER, ADAPTER)
         policy = LocalPolicy(adapter_path=str(ADAPTER))
     else:

@@ -9,14 +9,16 @@ import dataclasses
 import json
 import pathlib
 
-from .env import CASES, RULES, RefundDeskEnv, make_task
+from .env import RefundDeskEnv
+from .policy import CASES, RULES
+from .tasks import make_task
 from .rewards import is_true_success, verified_reward, wrongful_refund
 from .runner import run_episode
 
 EXAM_SEED_START = 1_000_000
 EXAM_TICKETS = 100
 RESULTS = pathlib.Path(__file__).parent.parent / "results"
-CHANGED_RESULTS = RESULTS / "changed_rules"   # step 8: the same tickets under changed rules
+CHANGED_RESULTS = RESULTS / "changed_rules"
 
 
 def _show_step(seen, action, result):

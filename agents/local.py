@@ -8,7 +8,7 @@ from __future__ import annotations
 from mlx_lm import generate, load
 from mlx_lm.sample_utils import make_sampler
 
-from refund_env.env import SYSTEM_PROMPT, parse_action, render_prompt
+from refund_env.prompts import SYSTEM_PROMPT, parse_action, render_prompt
 
 MODEL = "mlx-community/gemma-4-e2b-it-4bit"
 # How Gemma writes its scratch paper and ends its turn. Training examples use
@@ -24,7 +24,7 @@ class LocalPolicy:
         self.model_name = model
         self.model, self.tokenizer = load(model, adapter_path=adapter_path)
         self.sampler = make_sampler(temp=temp)
-        self.system_prompt = system_prompt   # the rulebook
+        self.system_prompt = system_prompt
         self.messages = []
         self.trace = []  # (prompt, full output including thinking) for each step
 

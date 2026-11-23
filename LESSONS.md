@@ -1,194 +1,215 @@
-# Lessons from building this
+# Lessons from the project
 
-Most of what this project teaches came from runs that went wrong. Each section
-below is one of them: what happened, why, and what to take from it.
+Most of the lessons in this project came from runs that failed. Each section
+gives one run, in three parts:
 
-The numbers here are from the original runs, made before the exam was fixed at
-100 tickets, so the exam sizes vary. Current scores are in the README.
+- **What happened:** the result of the run.
+- **Cause:** the reason for the result.
+- **Lesson:** what to do in a different project.
 
-## 1. A model scored 1 of 50, and the model was not the problem
+The numbers are from the original runs. At that time, the exam did not have a
+fixed size of 100 tickets. For this reason, the exam sizes are different. The current
+scores are in the README.
 
-**What happened.** Untrained Gemma's first exam: 1 of 50.
+## 1. A score of 1 of 50 was not a defect of the model
 
-**Why.** Gemma thinks on scratch paper before it answers. The test script
-allowed 100 tokens per answer, so every answer was cut off mid-thought and never
-reached the tool call. With a 600-token allowance, and the scratch paper removed
-before reading the answer, the same model scored 23 of 30.
+**What happened.** On its first exam, untrained Gemma got a score of 1 of 50.
 
-**Lesson.** When a score is near zero, read a few raw outputs before judging
-the model. The code around the model (the harness) breaks more often than the
-model does.
+**Cause.** Gemma writes reasoning before its answer. The test script permitted
+only 100 tokens for each answer. For this reason, the script stopped each answer before
+the tool call. Then the limit changed to 600 tokens, and the script removed
+the reasoning before it read the answer. The same model got 23 of 30.
 
-## 2. A real model found the cheat the lazy manager pays for
+**Lesson.** When a score is almost zero, read some raw outputs of the model
+first. Then make a decision about the model. The code around the model (the
+harness) has defects more frequently than the model.
 
-**What happened.** All 7 of untrained Gemma's failures were the same: on a
-ticket that should be escalated, it told the customer "escalated" and never
-called the `escalate` tool.
+## 2. A real model found the defect in `naive_reward`
 
-**Why.** Saying the right words is easier than doing the work. `naive_reward`
-(the lazy manager) grades only the words, so it would have scored those 7
-tickets as correct. `verified_reward` (the careful manager) checks the order
-database and caught every one.
+**What happened.** Untrained Gemma had 7 failures, and all 7 were the same.
+The correct action was to escalate. Gemma told the customer "escalated", but
+it did not call the `escalate` tool.
 
-**Lesson.** Grade what happened in the world, not what the agent said. Step 2
-shows a toy learner discovering this cheat; a real model does it unprompted.
+**Cause.** To write the correct words is easier than to do the correct action.
+`naive_reward` examines only the words. For this reason, it gives a correct score to these
+7 tickets. `verified_reward` examines the order database. It found all 7
+failures.
 
-## 3. Supervised training quietly removed the model's reasoning
+**Lesson.** Give a score to the changes in the environment, not to the text of
+the agent. Step 2 shows a small program that learns this incorrect behaviour.
+A real model can do it without training.
 
-**What happened.** After supervised fine-tuning on the expert's episodes, Gemma
-scored 42 of 50. All 8 failures were tickets it should have refunded and
-escalated instead.
+## 3. Supervised training removed the reasoning of the model
 
-**Why.** The expert's examples contain only tool calls, no reasoning. Training
-on them taught Gemma to answer instantly, without its scratch paper. Without
-reasoning it stopped comparing the amount with the limit and fell back on a
-blanket habit: escalate every recent order.
+**What happened.** After supervised fine-tuning on the episodes of the expert,
+Gemma got 42 of 50. In all 8 failures, the correct action was a refund. Gemma
+escalated these tickets.
 
-**Lesson.** A model learns everything about your examples, including what they
-leave out. Look at how a trained model fails, not only how often.
+**Cause.** The examples of the expert contained only tool calls. They did not
+contain reasoning. The training taught Gemma to answer immediately, without
+reasoning. Without reasoning, Gemma did not compare the amount with the limit.
+It used one general habit: escalate all recent orders.
 
-## 4. Reinforcement fine-tuning made a guessing model worse
+**Lesson.** A model learns all of the properties of your examples. It also
+learns from the data that the examples do not contain. Examine how a trained
+model fails, and also how frequently it fails.
 
-**What happened.** Starting from the weights in lesson 3, reinforcement
-fine-tuning took the score from 42 to 35 to 29 of 50.
+## 4. Reinforcement fine-tuning made a model that guesses worse
 
-**Why.** The model was guessing between "escalate" and "refund" on recent
-orders. Reinforcement fine-tuning keeps whatever attempts succeeded, and here
-the successes were lucky guesses. Training on them flipped the habit from
-"escalate everything" to "refund everything".
+**What happened.** The training started from the weights in lesson 3.
+Reinforcement fine-tuning changed the score from 42 to 35 to 29 of 50.
 
-**Lesson.** Reinforcement fine-tuning strengthens what the model already does
-for the right reason. It cannot tell a lucky guess from understanding, so on a
-guessing model it amplifies the guess.
+**Cause.** On recent orders, the model guessed between "escalate" and
+"refund". Reinforcement fine-tuning keeps the attempts that are correct. Here,
+the correct attempts were guesses. Training on them changed the habit from
+"escalate all orders" to "refund all orders".
 
-## 5. A model too small to do the task never improved
+**Lesson.** Reinforcement fine-tuning makes stronger the behaviour that the
+model already shows for the correct reason. It cannot find the difference
+between a correct guess and a correct decision. For this reason, on a model that
+guesses, it makes the guesses stronger.
 
-**What happened.** A much smaller model (Qwen 0.5B) went 21, 21, 13, 15 of 50
-over three rounds. An earlier attempt with bigger training steps collapsed from
-21 to 7.
+## 5. A model that was too small did not improve
 
-**Why.** Its successful attempts were mostly luck, so there was no real skill
-in them to reinforce.
+**What happened.** A much smaller model (Qwen 0.5B) got 21, 21, 13 and 15 of
+50 in three rounds. An earlier run used larger training steps. Its score
+decreased from 21 to 7.
 
-**Lesson.** Check the untrained model first (step 4). If it never succeeds on
-purpose, fix that with a stronger model or with supervised training before
-trying reinforcement.
+**Cause.** Most of the correct attempts of the model were guesses. For this reason, there
+was no real skill in them to make stronger.
 
-## 6. Training on the wrong part of each example
+**Lesson.** Test the untrained model first (step 4). If the model is never
+correct for the correct reason, use a stronger model or supervised training.
+Then use reinforcement training.
 
-**What happened.** The first reinforcement run that kept Gemma's reasoning made
-it worse: 23 down to 17 of 30. The model had stopped reasoning again, even
-though every training example contained reasoning.
+## 6. The training measured the incorrect part of each example
 
-**Why.** Each example was the whole conversation so far, and the model was
-graded on reproducing all of it. Gemma's formatting removes the reasoning from
-earlier turns of a conversation. So most of the graded text showed answers with
-no reasoning in front of them, and that is what the model learned.
+**What happened.** The first reinforcement run that kept the reasoning of
+Gemma made the score worse: from 23 to 17 of 30. The model stopped its
+reasoning again. But each training example contained reasoning.
 
-**Fix.** `agents/local_trainer.py` grades the model only on what it wrote at
-the current step. With that one change the same run went 23, 26, 30, 29 of 30.
+**Cause.** Each example was the full conversation, and the training measured
+all of it. The text format of Gemma removes the reasoning from the earlier
+turns of a conversation. For this reason, most of the measured text contained answers
+without reasoning. The model learned this pattern.
 
-**Lesson.** Be exact about which part of each example the model is graded on.
+**Correction.** `agents/local_trainer.py` now measures only the text that the
+model wrote at the current step. After this one change, the same run got 23,
+26, 30 and 29 of 30.
 
-## 7. When it worked, and why
+**Lesson.** Know exactly which part of each example the training measures.
 
-Reinforcement fine-tuning worked when three things were true:
+## 7. The conditions for success
 
-- The untrained model already reasoned correctly and solved most tickets.
-- Its one fault was a skipped step (pressing escalate), and it did press it
-  some of the time, so there were good attempts to keep.
-- The reasoning was kept in the training examples and graded correctly.
+Reinforcement fine-tuning was successful when three conditions were true:
 
-No expert was used in that run. The only teacher was the careful manager's
-score.
+- The untrained model already had correct reasoning. It completed most tickets
+  correctly.
+- Its only fault was that it did not always do one step: the call to `escalate`. Sometimes the
+  model did the step. For this reason, there were good attempts to keep.
+- The training examples contained the reasoning, and the training measured the
+  correct part.
 
-## 8. Small exams hide and invent differences
+This run did not use an expert. Gemma learned only from the score from
+`verified_reward`.
 
-Early results compared 23 of 30 with 42 of 50 with 59 of 60: three different
-exams. With 30 tickets, one ticket is 3 points, so a move from 30 to 29 means
-nothing. Every trainee now sits the same 100 tickets (`refund_env/exam.py`),
-and each score is broken down by ticket type, because the breakdown is what
-revealed lessons 2, 3 and 4.
+## 8. Small exams hide differences and show false differences
 
-## 9. Loose ends in the environment that were tightened
+The first results compared 23 of 30, 42 of 50 and 59 of 60. These were three
+different exams. With 30 tickets, one ticket is 3 points. For this reason, a change from
+30 to 29 is not important. Now all agents do the same 100 tickets
+(`refund_env/exam.py`). The exam also gives the score for each ticket type.
+This detailed score showed lessons 2, 3 and 4.
 
-- **Units.** The rules said "$100" while orders showed `amount_cents`. That
-  tested unit conversion, not the refund policy. The prompt now states the limit
-  in cents. After this fix, supervised fine-tuning scored 96 of 100 where it
-  had scored 42 of 50 before, so part of lesson 3's failure was the environment's
-  fault, not the model's.
-- **Sloppy tools.** `escalate` accepted unknown arguments and could be called
-  twice. A tool that quietly accepts a wrong call hides the agent's mistake.
-  Both are now rejected, each with a test.
+## 9. Defects in the environment that we corrected
 
-## 10. Reinforcement cannot teach a step the model never takes
+- **Units.** The rules gave the limit as "$100", but the orders showed
+  `amount_cents`. For this reason, the test measured unit conversion, not the refund
+  policy. Now the prompt gives the limit in cents. After this correction,
+  supervised fine-tuning got 96 of 100. Before the correction, it got 42 of
+  50. For this reason, a part of the failure in lesson 3 was a defect of the environment.
+- **Tools that accepted incorrect calls.** `escalate` accepted unknown
+  arguments, and you could call it two times. A tool that accepts an incorrect
+  call hides the mistake of the agent. Now the environment rejects both
+  incorrect calls. A test checks each one.
 
-**What happened.** On the harder shop, untrained Gemma scored 78 of 100 and
-never called `check_customer` on any ticket. After three rounds of
-reinforcement fine-tuning it scored 79, and it still never checked.
+## 10. Reinforcement cannot teach a step that the model never does
 
-**Why.** Reinforcement fine-tuning keeps the attempts that succeeded. Skipping
-the check still succeeds whenever the customer is not flagged, which is most
-tickets. So all 155 kept practice attempts skipped the check, and training
-taught Gemma that skipping is fine. With the escalate button on the easy shop,
-Gemma pressed it some of the time, so there were good attempts to keep. Here
-there were none.
+**What happened.** On the more difficult environment, untrained Gemma got 78
+of 100. It did not call `check_customer` on any ticket. After three rounds of
+reinforcement fine-tuning, it got 79. It still did not check the customer.
 
-**Lesson.** Reinforcement only strengthens behaviour the model already
-produces sometimes. A step it never takes has to come from somewhere else: an
-example, a hint in the prompt, or a reward for the step itself.
+**Cause.** Reinforcement fine-tuning keeps the attempts that are correct.
+Most customers do not have a fraud flag. On these tickets, an attempt without
+the check is also correct. For this reason, all 155 kept attempts did not have the check.
+The training taught Gemma that the check is not necessary.
 
-## 11. A harder shop is the real test of the training
+On the easy environment, Gemma called `escalate` on some tickets. For this reason, there
+were good attempts to keep. On this environment, there were no good attempts.
 
-**What happened.** On the easy shop both training methods looked good (96 and
-100). On the harder shop, supervised training made Gemma worse (78 to 68) and
-reinforcement did almost nothing (78 to 79). Claude scored 100 on both shops.
+**Lesson.** Reinforcement makes stronger only the behaviour that the model
+shows sometimes. A step that the model never does must come from a different
+source. Examples are a training example, an instruction in the prompt, or a
+reward for the step.
 
-**Why.** Supervised training copied the expert's steps but not any reasoning,
-so Gemma checked every customer and then decided badly (lesson 3 again).
-Reinforcement had nothing new to strengthen (lesson 10).
+## 11. A more difficult environment tests the training method
 
-**Lesson.** A perfect score tells you the environment is too easy, not that the
-training method works. Make the environment harder until the best trainee
-still makes mistakes, then see which methods close the gap.
+**What happened.** On the easy environment, the two training methods had good
+results (96 and 100). On the more difficult environment, supervised training
+made Gemma worse (from 78 to 68). Reinforcement training had almost no effect
+(from 78 to 79). Claude got 100 on the two environments.
 
-## 12. Teach the step with reasoning, then reinforce it
+**Cause.** Supervised training copied the steps of the expert, but not the
+reasoning. For this reason, Gemma checked each customer, but its decisions were bad
+(lesson 3). Reinforcement had no new behaviour to make stronger (lesson 10).
 
-**What happened.** The expert's examples were rewritten so each step includes
-the expert's reasoning in Gemma's thinking format ("Rule 1: the customer is not
-flagged. Rule 2: delivered 26 days ago, within 30..."). Supervised training on
-those took Gemma from 78 to 99 of 100. It checked every customer, refunded half
-on all 13 opened items, and had no wrongful refunds. Reinforcement starting
-from those weights reached 100 of 100.
+**Lesson.** A perfect score shows that the environment is too easy. It does
+not show that the training method is good. Make the environment more
+difficult, until the best agent makes some mistakes. Then compare the
+training methods.
 
-**Why.** Supervised training supplied the step reinforcement could not find
-(lesson 10). The reasoning in the examples kept Gemma thinking, so it did not
-fall back on blanket habits (lesson 3). After that, Gemma solved 59 of its 60
-first practice tickets, so reinforcement had plenty of good attempts to keep,
-and they were good for the right reason (lesson 4).
+## 12. Teach the step with reasoning, then use reinforcement
 
-**Lesson.** Use supervised training to teach what the model never does, with
-the reasoning written out, and reinforcement to polish what it already does.
-The order matters. The move from 99 to 100 is a single ticket, so it is
-within noise: here supervised training did nearly all the work.
+**What happened.** We wrote the examples of the expert again. Each step now
+contains the reasoning of the expert, in the reasoning format of Gemma. An
+example is "Rule 1: the customer is not flagged. Rule 2: delivered 26 days
+ago, within 30...".
+
+Supervised training on these examples changed the score of Gemma from 78 to
+99 of 100. Gemma checked each customer and refunded half on all 13 opened
+items. It sent no refunds that the policy does not allow. Then reinforcement
+training started from these weights and got 100 of 100.
+
+**Cause.** Supervised training taught the step that reinforcement could not
+find (lesson 10). The reasoning in the examples kept the reasoning of Gemma.
+For this reason, Gemma did not use general habits (lesson 3). After this, Gemma got 59 of
+its first 60 training tickets correct. For this reason, reinforcement had many good
+attempts to keep, and they were correct for the correct reason (lesson 4).
+
+**Lesson.** Use supervised training to teach the steps that the model never
+does, with the reasoning in the examples. Then use reinforcement to improve
+the steps that the model already does. Do them in this sequence. The change
+from 99 to 100 is only one ticket, so it is not important. Here, supervised
+training did almost all of the work.
 
 ## 13. A perfect score needs a changed test
 
-**What happened.** After training, Gemma scored 99 and 100. But every ticket
-it practised on and every exam ticket used the same two numbers: deny after 30
-days, escalate over 10000 cents. Step 8 kept the same 100 tickets and changed
-the rulebook to 14 days and 5000 cents, which changes the right answer on 36
-tickets. With no new training, both trained versions of Gemma scored 100 and
-got all 36 changed tickets right. A hand-written expert that keeps the old
-numbers scores 64.
+**What happened.** After training, Gemma got 99 and 100. But all training
+tickets and all exam tickets used the same two numbers: deny after 30 days,
+and escalate above 10000 cents.
 
-**Why.** The expert's reasoning in step 5 always quoted the numbers next to
-the rule ("Rule 2: delivered 26 days ago, within 30"). Gemma learned the
-pattern "compare the order with the number in the rulebook", and on the new
-exam it wrote "more than 14, so I deny". The examples taught a way of
-thinking, not just answers.
+Step 8 used the same 100 tickets with new rules: 14 days and 5000 cents. The
+new rules change the correct answer on 36 tickets. There was no new training.
+The two trained versions of Gemma got 100, and all 36 changed tickets were
+correct. An expert that uses the old numbers gets 64.
 
-**Lesson.** A high score on tickets like the training tickets doesn't show
-what was learned. Change something the trainee should handle and see whether
-it adapts. This test only changed numbers; a new rule, or the rules in a new
-order, would test more.
+**Cause.** In step 5, the reasoning of the expert always gave the number next
+to the rule: "Rule 2: delivered 26 days ago, within 30". Gemma learned this
+pattern: compare the order with the number in the rules. On the new exam,
+Gemma wrote "more than 14, so I deny". The examples taught a method of
+reasoning, not only the answers.
+
+**Lesson.** A high score on tickets that are similar to the training tickets
+does not show what the model learned. Change a condition that the agent must
+manage, and examine the result. This test changed only the numbers. A new
+rule, or the rules in a different sequence, is a better test.

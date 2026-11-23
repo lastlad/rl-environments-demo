@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from .env import SYSTEM_PROMPT, render_prompt
+from .prompts import SYSTEM_PROMPT, render_prompt
 
 
 def run_episode(env, policy, seed, on_step=None):

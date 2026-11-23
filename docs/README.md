@@ -1,35 +1,51 @@
 # How this project works
 
-These pages explain the whole project with diagrams, from the shop itself to
-the last results table. Read them in order:
+This project trains a language model to work customer refund tickets. The
+model uses tools on a simulated order database. A reward function gives a
+score to each ticket that the model completes.
 
-1. [The shop](1-the-shop.md): what the environment is made of, what happens
-   during one ticket, and how the managers grade it.
-2. [The trainees](2-the-trainees.md): who can sit at the desk, why they all
-   fit the same seat, and what job each one has.
-3. [The steps](3-the-steps.md): what each of the seven scripts does, one
-   diagram per step, including how the training data is made.
+Read these pages in this sequence:
 
-The project uses one picture throughout:
+1. [The environment](1-environment.md): the tickets, the tools, the reward
+   functions and the exam.
+2. [The agents](2-agents.md): the programs and models that work the tickets.
+3. [The steps](3-steps.md): the eight scripts, with one diagram for each
+   script.
 
-| Shop word | Project word | Where it lives |
-|---|---|---|
-| The shop | The environment | `refund_env/` |
-| The trainee | The agent (or policy) | `agents/` |
-| The manager | The reward function | `refund_env/rewards.py` |
-| Exam day | Evaluation | `refund_env/exam.py` |
-| Training | Fine-tuning | `step5`, `step6`, `agents/local_trainer.py` |
+## Terms
+
+These pages use the terms in this table. Each term has one definition only.
+
+| Term | Definition | Location | Shop word |
+|---|---|---|---|
+| Environment | The order database, the tools and the episode | `refund_env/env.py` | The shop |
+| Prerequisites | The tasks and the answer key that the environment needs. This demo makes them with code | `refund_env/tasks.py`, `refund_env/policy.py` | |
+| Ticket | One customer request for a refund | `make_task()` in `tasks.py` | |
+| Episode | One ticket, from the first tool call to the end | `run_episode()` in `runner.py` | |
+| Agent | A program or model that selects the tool calls | `agents/` | The trainee |
+| Reward function | The function that gives a score to a completed episode | `refund_env/rewards.py` | The manager |
+| `naive_reward` | A reward function that examines only the reply text | `rewards.py` | The lazy manager |
+| `verified_reward` | A reward function that examines the database changes | `rewards.py` | The careful manager |
+| Exam | The same 100 tickets for every agent, scored with `verified_reward` | `refund_env/exam.py` | Exam day |
+| Training | A process that changes the model weights | steps 5 and 6 | |
+| Reasoning | The sentence that gives the reason for one tool call | `self.thought` in `toy.py` | |
+| Adapter | A small file of weight changes that loads on top of the original model | `out/*_adapter/` | |
+
+## The parts and how they connect
 
 ```mermaid
 flowchart LR
-    SHOP["THE SHOP<br/>refund_env/"] --- DESK(("the desk<br/>runner.py"))
-    TRAINEE["A TRAINEE<br/>agents/"] --- DESK
-    DESK --> MANAGER["THE MANAGER<br/>rewards.py"]
-    MANAGER --> SCORE["a score"]
-    SCORE --> USE{"what the score<br/>is used for"}
-    USE --> EXAM["exam results<br/>results/*.json"]
-    USE --> TRAIN["training data<br/>out/*/train.jsonl"]
+    ENV["environment<br/>refund_env/"] --- LOOP(("episode loop<br/>runner.py"))
+    AGENT["agent<br/>agents/"] --- LOOP
+    LOOP --> REW["reward function<br/>rewards.py"]
+    REW --> SCORE["score"]
+    SCORE --> EXAM["exam results<br/>results/*.json"]
+    SCORE --> DATA["training data<br/>out/*/train.jsonl"]
 ```
 
-Everything in the project is one of these: building the shop, putting a
-trainee at the desk, grading what it did, or using those grades to teach it.
+The episode loop connects one agent to the environment. At the end of the
+episode, the reward function gives a score. The project uses the score in two
+ways:
+
+- An exam records the score in `results/`.
+- A training step uses the score to select training data.

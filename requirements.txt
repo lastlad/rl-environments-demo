@@ -1,2 +1,1 @@
 mlx-lm==0.31.3     # runs and fine-tunes Gemma on Apple Silicon (steps 4-6)
-anthropic>=2.8     # Claude (step 3)

@@ -7,7 +7,7 @@ whatever reward they were trained on.
 """
 from agents.toy import OraclePolicy, RandomPolicy, TabularPolicy
 from refund_env import RefundDeskEnv, make_task, naive_reward, run_episode, verified_reward
-from refund_env.env import CASES
+from refund_env.policy import CASES
 from refund_env.exam import EXAM_SEED_START as EVAL_SEED_START  # training uses seeds 0..N
 
 

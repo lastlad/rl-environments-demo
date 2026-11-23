@@ -7,7 +7,8 @@ step2_compare_rewards.py trains one policy under each so you can see the differe
 """
 from __future__ import annotations
 
-from .env import Episode, refund_due_cents
+from .env import Episode
+from .policy import refund_due_cents
 
 STEP_COST = 0.02  # small pressure to be efficient; applies to both rewards
 

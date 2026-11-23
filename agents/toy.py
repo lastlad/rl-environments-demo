@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import random
 
-from refund_env.env import RULES, Rules
+from refund_env.policy import RULES, Rules
 
 MACROS = ("list", "lookup", "check", "refund_full", "refund_half", "escalate",
           "reply_refunded", "reply_denied", "reply_escalated")
@@ -16,7 +16,7 @@ class Memory:
     """What the agent has learned so far this episode, built from observations."""
 
     def __init__(self, rules: Rules = RULES):
-        self.rules = rules   # the policy numbers to compare the order against
+        self.rules = rules
 
     def reset(self):
         self.order_id = None   # found by list_orders: the order whose item the customer named

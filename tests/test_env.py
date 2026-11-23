@@ -9,12 +9,12 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from agents.toy import OraclePolicy, RandomPolicy  # noqa: E402
-from refund_env import (RefundDeskEnv, make_task, naive_reward, parse_action,  # noqa: E402
+from agents.toy import OraclePolicy, RandomPolicy
+from refund_env import (RefundDeskEnv, make_task, naive_reward, parse_action,
                         rollout, run_episode, verified_reward)
-from refund_env.env import (CASES, CHANGED_RULES, RULES, SYSTEM_PROMPT,  # noqa: E402
-                            expected_case, system_prompt)
-from refund_env.exam import EXAM_SEED_START, EXAM_TICKETS, run_exam  # noqa: E402
+from refund_env.policy import CASES, CHANGED_RULES, RULES, expected_case
+from refund_env.prompts import SYSTEM_PROMPT, system_prompt
+from refund_env.exam import EXAM_SEED_START, EXAM_TICKETS, run_exam
 
 
 def call(tool, **args):

@@ -22,7 +22,7 @@ from mlx_lm import load
 from agents.local import END_OF_TURN, MODEL, THINK_END, THINK_START
 from agents.toy import OraclePolicy
 from refund_env import RefundDeskEnv, render_prompt, run_episode, verified_reward
-from refund_env.env import SYSTEM_PROMPT
+from refund_env.prompts import SYSTEM_PROMPT
 
 HERE = pathlib.Path(__file__).parent
 DATA = HERE / "out" / "sft_data"

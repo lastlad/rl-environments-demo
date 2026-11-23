@@ -52,7 +52,6 @@ if __name__ == "__main__":
         "adapter_path": str(adapter),
         "resume_adapter_file": str(resume) if resume.exists() else None,
         "mask_prompt": True,
-        # Small settings so the model fits in 16 GB of memory .
         "batch_size": 1,
         "num_layers": 8,
         "grad_checkpoint": True,

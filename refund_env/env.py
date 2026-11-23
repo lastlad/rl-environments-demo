@@ -1,37 +1,34 @@
-"""Refund desk: a small RL environment shaped like a real agent task.
+"""THE ENVIRONMENT: the order database, the tools and the episode.
 
 One episode = one support ticket. The agent calls tools against a simulated
 order database, then ends the episode with a `reply`.
 
-The customer names the item, not the order number, so the agent has to find
-the order first. Company policy, checked in this order:
-  1. customer is flagged for fraud        -> escalate to a human
-  2. delivered more than 30 days ago      -> deny
-  3. amount over $100                     -> escalate to a human
-  4. the item was opened                  -> refund half the amount
-  5. otherwise                            -> refund the full amount
-Money is always in cents (amount_cents 10000 = $100), and the prompt says so.
+An RL environment needs some parts that the environment does not make itself 
+and are part of prerequisities below.
 
-The pieces every environment has, and where they live here:
-  task generator   make_task(seed)      what situation the agent is dropped into
-  state            env.db               the simulated world, mutated by tools
-  observation      env._obs()           the part of the world the agent may see
-  actions          env._execute()       tool calls: {"tool": ..., "args": {...}}
-  reward           rewards.py           scores the finished episode
-  termination      env.step()           `reply` ends it; the step limit truncates it
+  PREREQUISITES (made for this demo; in a real project they come from real data)
+    tasks            tasks.py     make_task(seed): the tickets and their orders
+    policy + answer  policy.py    the 5 rules and expected_case(): the correct answer
+
+  THE ENVIRONMENT (this file)
+    state            env.db       the simulated world, mutated by tools
+    observation      env._obs()   the part of the world the agent may see
+    actions          env._execute()  tool calls: {"tool": ..., "args": {...}}
+    termination      env.step()   `reply` ends it; the step limit truncates it
+
+  AROUND THE ENVIRONMENT
+    reward           rewards.py   scores the finished episode
+    episode loop     runner.py    connects one agent to the environment
+    text interface   prompts.py   the rules and observations as text, for a language model
 """
 from __future__ import annotations
 
 import copy
-import json
-import random
 from dataclasses import dataclass
 
-REFUND_WINDOW_DAYS = 30
-AUTO_REFUND_LIMIT_CENTS = 100_00  # money is integer cents: float equality breaks graders
-RESOLUTIONS = ("refunded", "denied", "escalated")
-# The five kinds of ticket. The part before "_" is the right reply.
-CASES = ("refunded_full", "refunded_half", "escalated_over_limit", "escalated_flagged", "denied")
+from .policy import RESOLUTIONS, RULES, Rules
+from .tasks import Task, make_task
+
 TOOL_ARGS = {   # every tool and the arguments it accepts; anything else is rejected
     "list_orders": ("customer",),
     "lookup_order": ("order_id",),
@@ -40,26 +37,6 @@ TOOL_ARGS = {   # every tool and the arguments it accepts; anything else is reje
     "escalate": ("order_id",),
     "reply": ("resolution", "message"),
 }
-ITEMS = ("headphones", "kettle", "backpack", "desk lamp", "keyboard")
-CLAIMS = (
-    "It only arrived last week.",
-    "I've had it for a while now.",
-    "It's well within your return window.",
-    "I never even opened it.",
-    "",
-)
-
-
-@dataclass(frozen=True)
-class Task:
-    task_id: str
-    customer: str
-    order_id: str
-    message: str
-    orders: dict    # initial database; the env works on a copy
-    flagged: bool   # is the customer flagged for fraud?
-    case: str       # ground truth, one of CASES. Never shown to the agent.
-    expected: str   # the right reply, one of RESOLUTIONS. Never shown either.
 
 
 @dataclass
@@ -71,93 +48,6 @@ class Episode:
     reply: dict | None    # {"resolution": ..., "message": ...}, None if never sent
     truncated: bool
     invalid_actions: int
-
-
-@dataclass(frozen=True)
-class Rules:
-    """The two numbers in the shop's policy. Change them and the right answer
-    to many tickets changes too (step 8)."""
-    window_days: int = REFUND_WINDOW_DAYS    # rule 2: deny if delivered more than this many days ago
-    limit_cents: int = AUTO_REFUND_LIMIT_CENTS  # rule 3: escalate if the amount is over this
-
-
-RULES = Rules()    # the normal rules: every trainee practised on these
-CHANGED_RULES = Rules(window_days=14, limit_cents=50_00)   # step 8's exam
-
-
-def expected_case(flagged: bool, days_since_delivery: int, amount_cents: int,
-                  opened: bool, rules: Rules = RULES) -> str:
-    """The policy, written once. The task generator is tested against it."""
-    if flagged:
-        return "escalated_flagged"
-    if days_since_delivery > rules.window_days:
-        return "denied"
-    if amount_cents > rules.limit_cents:
-        return "escalated_over_limit"
-    return "refunded_half" if opened else "refunded_full"
-
-
-def refund_due_cents(order: dict) -> int:
-    """How much a refundable order should get back: half (rounded down) if opened."""
-    return order["amount_cents"] // 2 if order["opened"] else order["amount_cents"]
-
-
-def make_task(seed: int, rules: Rules = RULES) -> Task:
-    """Same seed -> same task, always. Uses its own RNG, never the global one.
-
-    The customer, the orders and the message are always drawn the same way, so
-    a seed gives the same ticket under any rules. Only the right answer
-    (`case`, `expected`) depends on the rules.
-    """
-    rng = random.Random(seed)
-    case = rng.choice(CASES)
-    flagged = case == "escalated_flagged"
-    opened = rng.random() < 0.5
-    # randint is inclusive, so the boundaries (day 30, exactly $100) do occur.
-    if case == "denied":
-        days, amount = rng.randint(REFUND_WINDOW_DAYS + 1, 90), rng.randint(5_00, 300_00)
-    elif case == "escalated_flagged":
-        # Any order at all: a flagged customer is escalated even when the
-        # order would otherwise be refunded or denied.
-        days, amount = rng.randint(1, 90), rng.randint(5_00, 300_00)
-    elif case == "escalated_over_limit":
-        days, amount = rng.randint(1, REFUND_WINDOW_DAYS), rng.randint(AUTO_REFUND_LIMIT_CENTS + 1, 300_00)
-    else:
-        days, amount = rng.randint(1, REFUND_WINDOW_DAYS), rng.randint(5_00, AUTO_REFUND_LIMIT_CENTS)
-        opened = case == "refunded_half"
-
-    customer = f"C{rng.randint(100, 999)}"
-    items = rng.sample(ITEMS, 3)
-    ids = [f"A{n}" for n in rng.sample(range(1000, 9999), 3)]
-
-    def order(item, amount_cents, days_since_delivery, opened):
-        return {
-            "customer": customer,
-            "item": item,
-            "amount_cents": amount_cents,
-            "days_since_delivery": days_since_delivery,
-            "opened": opened,
-            "refunded_cents": 0,
-            "escalated": False,
-        }
-
-    orders = {ids[0]: order(items[0], amount, days, opened)}
-    # Two more orders on the same account. They are refundable, so an agent
-    # that acts on the wrong order moves real (simulated) money.
-    for oid, item in zip(ids[1:], items[1:]):
-        orders[oid] = order(item, rng.randint(5_00, 100_00), rng.randint(1, 30), rng.random() < 0.5)
-    orders = dict(sorted(orders.items()))  # so the right order is not always listed first
-    # What the customer says is not correlated with the truth. The agent has to
-    # check the records instead of trusting the ticket.
-    claim = rng.choice(CLAIMS)
-    message = f"I want a refund for my {items[0]}. {claim}".strip()
-    # Under the normal rules this is the case picked above; under other rules
-    # the same facts can call for a different answer.
-    real = orders[ids[0]]
-    case = expected_case(flagged, real["days_since_delivery"], real["amount_cents"],
-                         real["opened"], rules)
-    expected = case.split("_")[0]
-    return Task(f"refund-{seed}", customer, ids[0], message, orders, flagged, case, expected)
 
 
 class RefundDeskEnv:
@@ -207,8 +97,6 @@ class RefundDeskEnv:
         return Episode(self.task, copy.deepcopy(self.db), copy.deepcopy(self.steps),
                        copy.deepcopy(self.reply), truncated, self.invalid_actions)
 
-    # ---- observation ------------------------------------------------------
-
     def _obs(self, last_result) -> dict:
         return {
             "ticket": {
@@ -219,7 +107,6 @@ class RefundDeskEnv:
             "steps_left": self.max_steps - len(self.steps),
         }
 
-    # ---- actions ----------------------------------------------------------
     # A bad action never raises. It costs a step and returns an error the agent
     # can read, exactly like a real API would.
 
@@ -300,51 +187,3 @@ class RefundDeskEnv:
             return self._invalid("reply", f"resolution must be one of {list(RESOLUTIONS)}")
         self.reply = {"resolution": args["resolution"], "message": str(args.get("message", ""))}
         return {"ok": True, "tool": "reply"}
-
-
-# ---- adapters for a language model -----------------------------------------
-# A scripted or tabular policy consumes the observation dict directly. An LLM
-# needs it as text, and its text output needs to be turned back into an action.
-
-def system_prompt(rules: Rules = RULES) -> str:
-    """The rulebook pinned to the wall: what every model reads first."""
-    window, limit = rules.window_days, rules.limit_cents
-    return f"""You are a refund desk agent. Customers name the item, not the
-order number: find their order with list_orders, then look it up.
-
-Policy, checked in this order:
-1. Customer flagged for fraud (see check_customer): escalate to a human.
-2. Delivered more than {window} days ago: deny.
-3. amount_cents over {limit} (${limit // 100}): escalate to a human.
-4. The item was opened: refund half the amount, rounded down to whole cents.
-5. Otherwise: refund the full amount.
-All amounts are in cents: amount_cents {limit} means ${limit // 100}.
-Customers can be wrong about dates and about whether they opened the item.
-Check the records.
-
-Answer with exactly one JSON tool call per turn:
-{{"tool": "list_orders", "args": {{"customer": "..."}}}}
-{{"tool": "lookup_order", "args": {{"order_id": "..."}}}}
-{{"tool": "check_customer", "args": {{"customer": "..."}}}}
-{{"tool": "issue_refund", "args": {{"order_id": "...", "amount_cents": 1234}}}}
-{{"tool": "escalate", "args": {{"order_id": "..."}}}}
-{{"tool": "reply", "args": {{"resolution": "refunded|denied|escalated", "message": "..."}}}}"""
-
-
-SYSTEM_PROMPT = system_prompt(RULES)
-
-
-def render_prompt(obs: dict) -> str:
-    if obs["last_result"] is None:
-        t = obs["ticket"]
-        return f"Ticket from customer {t['customer']}: {t['message']}\n({obs['steps_left']} steps left)"
-    return f"Tool result: {json.dumps(obs['last_result'])}\n({obs['steps_left']} steps left)"
-
-
-def parse_action(text: str):
-    """Model output -> action. Garbage is passed through so the env can
-    penalise it as an invalid action instead of the harness crashing."""
-    try:
-        return json.loads(text)
-    except (TypeError, ValueError):
-        return text
